@@ -78,6 +78,8 @@ data class AppSettings(
 data class DeviceStatus(
     val online: Boolean = true,
     
+    val active: Boolean = false, // true when DreamService is in foreground
+    
     @SerializedName("current_image")
     val currentImage: String? = null,
     
@@ -87,5 +89,17 @@ data class DeviceStatus(
     val profile: String? = null,
     
     @SerializedName("last_refresh")
-    val lastRefresh: String? = null
+    val lastRefresh: String? = null,
+    
+    @SerializedName("mac_address")
+    val macAddress: String? = null,
+    
+    @SerializedName("ip_address")
+    val ipAddress: String? = null,
+    
+    @SerializedName("display_width")
+    val displayWidth: Int? = null,
+    
+    @SerializedName("display_height")
+    val displayHeight: Int? = null
 )

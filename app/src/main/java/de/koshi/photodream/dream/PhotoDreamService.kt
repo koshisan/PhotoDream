@@ -22,6 +22,7 @@ import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
+import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
@@ -315,12 +316,18 @@ class PhotoDreamService : DreamService() {
     
     private fun getCurrentStatus(): DeviceStatus {
         val currentAsset = playlist.getOrNull(currentIndex)
+        val resolution = DeviceInfo.getDisplayResolution(this)
         return DeviceStatus(
             online = true,
+            active = true, // We're in DreamService = active
             currentImage = currentAsset?.id,
             currentImageUrl = currentAsset?.getThumbnailUrl(config?.immich?.baseUrl ?: ""),
             profile = config?.profile?.name,
-            lastRefresh = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date())
+            lastRefresh = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()),
+            macAddress = DeviceInfo.getMacAddress(this),
+            ipAddress = DeviceInfo.getIpAddress(this),
+            displayWidth = resolution.first,
+            displayHeight = resolution.second
         )
     }
 }
