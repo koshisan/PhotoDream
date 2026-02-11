@@ -9,7 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
@@ -62,6 +64,7 @@ class HttpServerService : Service() {
     private val binder = LocalBinder()
     private val gson = Gson()
     private var serverPort = DEFAULT_PORT
+    private val mainHandler = Handler(Looper.getMainLooper())
     
     // Status tracking (persists even when DreamService is not bound)
     private var currentStatus = DeviceStatus(online = true, active = false)
@@ -221,8 +224,8 @@ class HttpServerService : Service() {
                 // Save config
                 ConfigManager.saveConfigFromHA(this@HttpServerService, config)
                 
-                // Notify DreamService
-                onConfigReceived?.invoke(config)
+                // Notify DreamService on main thread
+                mainHandler.post { onConfigReceived?.invoke(config) }
                 
                 jsonResponse(mapOf("success" to true, "message" to "Config received"))
             } catch (e: Exception) {
@@ -236,12 +239,14 @@ class HttpServerService : Service() {
         }
         
         private fun handleRefreshConfig(): Response {
-            onRefreshConfig?.invoke()
+            // Run callback on main thread
+            mainHandler.post { onRefreshConfig?.invoke() }
             return jsonResponse(mapOf("success" to true, "message" to "Config refresh triggered"))
         }
         
         private fun handleNext(): Response {
-            onNextImage?.invoke()
+            // Run callback on main thread (UI operations require main thread)
+            mainHandler.post { onNextImage?.invoke() }
             return jsonResponse(mapOf("success" to true, "message" to "Next image triggered"))
         }
         
@@ -254,7 +259,8 @@ class HttpServerService : Service() {
             val profile = request["profile"] as? String
             
             return if (profile != null) {
-                onSetProfile?.invoke(profile)
+                // Run callback on main thread
+                mainHandler.post { onSetProfile?.invoke(profile) }
                 jsonResponse(mapOf("success" to true, "profile" to profile))
             } else {
                 newFixedLengthResponse(
