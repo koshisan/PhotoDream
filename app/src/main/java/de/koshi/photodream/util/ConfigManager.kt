@@ -133,12 +133,18 @@ object ConfigManager {
         
         return withContext(Dispatchers.IO) {
             try {
-                val url = "${settings.haUrl.trimEnd('/')}/api/webhook/$REGISTER_WEBHOOK?device_id=${settings.deviceId}"
+                val url = "${settings.haUrl.trimEnd('/')}/api/webhook/$REGISTER_WEBHOOK"
                 Log.d(TAG, "Polling for config: $url")
+                
+                // Use POST with poll action (GET not supported by HA webhooks)
+                val body = gson.toJson(mapOf(
+                    "action" to "poll",
+                    "device_id" to settings.deviceId
+                ))
                 
                 val request = Request.Builder()
                     .url(url)
-                    .get()
+                    .post(body.toRequestBody("application/json".toMediaType()))
                     .build()
                 
                 val response = httpClient.newCall(request).execute()
