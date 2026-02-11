@@ -1,19 +1,30 @@
 package de.koshi.photodream.server
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
+import de.koshi.photodream.MainActivity
+import de.koshi.photodream.R
 import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
 import de.koshi.photodream.util.ConfigManager
 
 /**
  * HTTP Server Service for Home Assistant communication
+ * 
+ * Runs as a Foreground Service so it stays alive even when DreamService is not active.
+ * This allows HA to push config and send commands at any time.
  * 
  * Endpoints:
  * - GET /status - Returns current device status
@@ -28,18 +39,43 @@ class HttpServerService : Service() {
     companion object {
         private const val TAG = "HttpServerService"
         const val DEFAULT_PORT = 8080
+        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = "photodream_server"
+        
+        fun start(context: Context, port: Int = DEFAULT_PORT) {
+            val intent = Intent(context, HttpServerService::class.java).apply {
+                putExtra("port", port)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+        
+        fun stop(context: Context) {
+            context.stopService(Intent(context, HttpServerService::class.java))
+        }
     }
     
     private var server: PhotoDreamServer? = null
     private val binder = LocalBinder()
     private val gson = Gson()
+    private var serverPort = DEFAULT_PORT
     
-    // Callbacks for DreamService
+    // Status tracking (persists even when DreamService is not bound)
+    private var currentStatus = DeviceStatus(online = true, active = false)
+    
+    // Callbacks for DreamService (set when DreamService binds)
     var onConfigReceived: ((DeviceConfig) -> Unit)? = null
     var onRefreshConfig: (() -> Unit)? = null
     var onNextImage: (() -> Unit)? = null
     var onSetProfile: ((String) -> Unit)? = null
     var getStatus: (() -> DeviceStatus)? = null
+    
+    fun updateStatus(status: DeviceStatus) {
+        currentStatus = status
+    }
     
     inner class LocalBinder : Binder() {
         fun getService(): HttpServerService = this@HttpServerService
@@ -50,6 +86,59 @@ class HttpServerService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "HttpServerService created")
+        createNotificationChannel()
+    }
+    
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        serverPort = intent?.getIntExtra("port", DEFAULT_PORT) ?: DEFAULT_PORT
+        
+        // Start as foreground service with special use type
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, createNotification(), 
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
+        
+        // Start HTTP server
+        startServer(serverPort)
+        
+        // Return sticky so system restarts service if killed
+        return START_STICKY
+    }
+    
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "PhotoDream Server",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "HTTP Server for Home Assistant communication"
+                setShowBadge(false)
+            }
+            
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager?.createNotificationChannel(channel)
+        }
+    }
+    
+    private fun createNotification(): Notification {
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("PhotoDream")
+            .setContentText("Server running on port $serverPort")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
     }
     
     fun startServer(port: Int = DEFAULT_PORT) {
@@ -114,7 +203,8 @@ class HttpServerService : Service() {
         }
         
         private fun handleStatus(): Response {
-            val status = getStatus?.invoke() ?: DeviceStatus(online = true)
+            // Use callback if DreamService is bound, otherwise use cached status
+            val status = getStatus?.invoke() ?: currentStatus
             return jsonResponse(status)
         }
         

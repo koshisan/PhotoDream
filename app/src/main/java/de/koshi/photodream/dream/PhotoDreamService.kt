@@ -122,17 +122,17 @@ class PhotoDreamService : DreamService() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as HttpServerService.LocalBinder
             httpService = localBinder.getService().apply {
-                // Setup callbacks
+                // Setup callbacks for when DreamService is active
                 onRefreshConfig = { refreshConfig() }
                 onNextImage = { showNextImage() }
                 onSetProfile = { profile -> setProfile(profile) }
                 getStatus = { getCurrentStatus() }
                 
-                // Start server
-                startServer(ConfigManager.getSettings(this@PhotoDreamService).serverPort)
+                // Update status to show we're active
+                updateStatus(getCurrentStatus())
             }
             serviceBound = true
-            Log.d(TAG, "HttpServerService connected")
+            Log.d(TAG, "HttpServerService connected, DreamService is active")
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -201,15 +201,25 @@ class PhotoDreamService : DreamService() {
     }
     
     private fun bindHttpService() {
+        // Service is already started by MainActivity as foreground service
+        // We just bind to it to set callbacks
         val intent = Intent(this, HttpServerService::class.java)
-        startService(intent) // Keep service alive
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
     private fun unbindHttpService() {
         if (serviceBound) {
+            // Clear callbacks and update status to inactive
+            httpService?.apply {
+                onRefreshConfig = null
+                onNextImage = null
+                onSetProfile = null
+                getStatus = null
+                updateStatus(DeviceStatus(online = true, active = false))
+            }
             unbindService(serviceConnection)
             serviceBound = false
+            Log.d(TAG, "HttpServerService unbound, DreamService is inactive")
         }
     }
     

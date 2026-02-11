@@ -9,6 +9,7 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
 import android.widget.TextView
 import de.koshi.photodream.model.AppSettings
+import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
 import kotlinx.coroutines.*
 
@@ -49,11 +50,19 @@ class MainActivity : AppCompatActivity() {
         // Load existing settings
         loadSettings()
         
+        // Start HTTP server as foreground service (runs permanently)
+        startHttpServer()
+        
         // Check if already configured
         checkExistingConfig()
         
         // Setup button
         btnRegister.setOnClickListener { registerWithHA() }
+    }
+    
+    private fun startHttpServer() {
+        val settings = ConfigManager.getSettings(this)
+        HttpServerService.start(this, settings.serverPort)
     }
     
     override fun onDestroy() {
