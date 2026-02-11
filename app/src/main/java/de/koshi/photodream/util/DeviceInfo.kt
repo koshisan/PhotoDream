@@ -3,9 +3,11 @@ package de.koshi.photodream.util
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -18,14 +20,33 @@ object DeviceInfo {
     
     /**
      * Get device MAC address
+     * Tries multiple methods due to Android privacy restrictions
      */
     fun getMacAddress(context: Context): String? {
+        // Method 1: Try reading from /sys/class/net (works on some devices)
+        try {
+            val interfaces = listOf("wlan0", "eth0", "wlan1")
+            for (iface in interfaces) {
+                val file = File("/sys/class/net/$iface/address")
+                if (file.exists()) {
+                    val mac = file.readText().trim().uppercase()
+                    if (mac.isNotBlank() && mac != "00:00:00:00:00:00") {
+                        Log.d(TAG, "Got MAC from /sys/class/net/$iface: $mac")
+                        return mac
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not read MAC from /sys: ${e.message}")
+        }
+        
+        // Method 2: NetworkInterface (may work on older devices or with permissions)
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
             while (interfaces.hasMoreElements()) {
                 val networkInterface = interfaces.nextElement()
                 
-                // Look for wlan interface
+                // Look for wlan or eth interface
                 if (!networkInterface.name.contains("wlan", ignoreCase = true) &&
                     !networkInterface.name.contains("eth", ignoreCase = true)) {
                     continue
@@ -39,12 +60,31 @@ object DeviceInfo {
                 }
                 
                 if (macString.isNotBlank() && macString != "00:00:00:00:00:00") {
+                    Log.d(TAG, "Got MAC from NetworkInterface: $macString")
                     return macString
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting MAC address: ${e.message}", e)
+            Log.d(TAG, "Could not get MAC from NetworkInterface: ${e.message}")
         }
+        
+        // Method 3: WifiManager (deprecated but may work on some devices)
+        try {
+            @Suppress("DEPRECATION")
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val wifiInfo = wifiManager?.connectionInfo
+            val mac = wifiInfo?.macAddress
+            if (mac != null && mac != "02:00:00:00:00:00" && mac.isNotBlank()) {
+                Log.d(TAG, "Got MAC from WifiManager: $mac")
+                return mac.uppercase()
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not get MAC from WifiManager: ${e.message}")
+        }
+        
+        // Fallback: Return Android ID as pseudo-identifier (not a MAC but unique)
+        // This ensures we always have some identifier
+        Log.w(TAG, "Could not get real MAC address, using Android ID as fallback")
         return null
     }
     

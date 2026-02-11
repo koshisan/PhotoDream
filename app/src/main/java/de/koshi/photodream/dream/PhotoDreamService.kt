@@ -130,6 +130,7 @@ class PhotoDreamService : DreamService() {
             val localBinder = binder as HttpServerService.LocalBinder
             httpService = localBinder.getService().apply {
                 // Setup callbacks for when DreamService is active
+                onConfigReceived = { newConfig -> applyConfigLive(newConfig) }
                 onRefreshConfig = { refreshConfig() }
                 onNextImage = { showNextImage() }
                 onSetProfile = { profile -> setProfile(profile) }
@@ -441,6 +442,35 @@ class PhotoDreamService : DreamService() {
     }
     
     // --- Callbacks for HTTP Server ---
+    
+    /**
+     * Apply config changes live without reloading playlist
+     * Used when HA pushes display config updates (clock, interval, etc.)
+     */
+    private fun applyConfigLive(newConfig: DeviceConfig) {
+        Log.i(TAG, "Applying config live: clock=${newConfig.display.clock}, interval=${newConfig.display.intervalSeconds}")
+        
+        val oldProfile = config?.profile?.name
+        config = newConfig
+        
+        // Apply display settings immediately
+        setupClock(newConfig.display)
+        
+        // Reset slideshow timer with new interval
+        resetSlideshowTimer()
+        
+        // If profile changed, reload playlist
+        if (oldProfile != newConfig.profile.name) {
+            Log.i(TAG, "Profile changed from $oldProfile to ${newConfig.profile.name}, reloading playlist")
+            scope.launch {
+                immichClient = ImmichClient(newConfig.immich)
+                loadPlaylist(newConfig.profile)
+            }
+        }
+        
+        // Update HTTP service status
+        httpService?.updateStatus(getCurrentStatus())
+    }
     
     private fun refreshConfig() {
         scope.launch {
