@@ -10,11 +10,14 @@ import android.os.IBinder
 import android.os.Looper
 import android.service.dreams.DreamService
 import android.util.Log
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import kotlin.math.abs
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.model.LazyHeaders
@@ -51,6 +54,54 @@ class PhotoDreamService : DreamService() {
     
     private var httpService: HttpServerService? = null
     private var serviceBound = false
+    
+    // Gesture detection for swipes and taps
+    private lateinit var gestureDetector: GestureDetector
+    
+    private val gestureListener = object : GestureDetector.SimpleOnGestureListener() {
+        private val SWIPE_THRESHOLD = 100
+        private val SWIPE_VELOCITY_THRESHOLD = 100
+        
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // Single tap = exit dream
+            Log.d(TAG, "Tap detected - finishing dream")
+            finish()
+            return true
+        }
+        
+        override fun onFling(
+            e1: MotionEvent?,
+            e2: MotionEvent,
+            velocityX: Float,
+            velocityY: Float
+        ): Boolean {
+            if (e1 == null) return false
+            
+            val diffX = e2.x - e1.x
+            val diffY = e2.y - e1.y
+            
+            // Only handle horizontal swipes (ignore vertical)
+            if (abs(diffX) > abs(diffY) && 
+                abs(diffX) > SWIPE_THRESHOLD && 
+                abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+                
+                if (diffX > 0) {
+                    // Swipe right = previous image
+                    Log.d(TAG, "Swipe right - previous image")
+                    showPreviousImage()
+                } else {
+                    // Swipe left = next image
+                    Log.d(TAG, "Swipe left - next image")
+                    showNextImage()
+                }
+                
+                // Reset slideshow timer on manual navigation
+                resetSlideshowTimer()
+                return true
+            }
+            return false
+        }
+    }
     
     private val clockRunnable = object : Runnable {
         override fun run() {
@@ -96,12 +147,23 @@ class PhotoDreamService : DreamService() {
         
         // Dream settings
         isFullscreen = true
-        isInteractive = true // Allow touch
+        isInteractive = true // Allow touch for gestures
         isScreenBright = true
+        
+        // Initialize gesture detector
+        gestureDetector = GestureDetector(this, gestureListener)
         
         setupUI()
         bindHttpService()
         loadConfigAndStart()
+    }
+    
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // Let gesture detector handle the event
+        if (gestureDetector.onTouchEvent(event)) {
+            return true
+        }
+        return super.dispatchTouchEvent(event)
     }
     
     override fun onDetachedFromWindow() {
@@ -281,6 +343,20 @@ class PhotoDreamService : DreamService() {
         
         currentIndex = (currentIndex + 1) % playlist.size
         showCurrentImage()
+    }
+    
+    private fun showPreviousImage() {
+        if (playlist.isEmpty()) return
+        
+        currentIndex = if (currentIndex > 0) currentIndex - 1 else playlist.size - 1
+        showCurrentImage()
+    }
+    
+    private fun resetSlideshowTimer() {
+        // Cancel and restart the slideshow timer
+        handler.removeCallbacks(slideshowRunnable)
+        val interval = (config?.display?.intervalSeconds ?: 30) * 1000L
+        handler.postDelayed(slideshowRunnable, interval)
     }
     
     private fun showError(message: String) {
