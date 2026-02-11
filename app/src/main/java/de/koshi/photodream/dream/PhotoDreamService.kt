@@ -28,6 +28,11 @@ import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
 import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import com.google.gson.Gson
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -54,6 +59,10 @@ class PhotoDreamService : DreamService() {
     
     private var httpService: HttpServerService? = null
     private var serviceBound = false
+    
+    // For sending status updates to HA
+    private val httpClient = OkHttpClient()
+    private val gson = Gson()
     
     // Gesture detection for swipes and taps
     private lateinit var gestureDetector: GestureDetector
@@ -346,6 +355,9 @@ class PhotoDreamService : DreamService() {
             .into(imageView)
         
         Log.d(TAG, "Showing image ${currentIndex + 1}/${playlist.size}: ${asset.id}")
+        
+        // Report status to Home Assistant
+        reportStatusToHA()
     }
     
     private fun showNextImage() {
@@ -360,6 +372,51 @@ class PhotoDreamService : DreamService() {
         
         currentIndex = if (currentIndex > 0) currentIndex - 1 else playlist.size - 1
         showCurrentImage()
+    }
+    
+    /**
+     * Send current status to Home Assistant via webhook
+     */
+    private fun reportStatusToHA() {
+        val webhookUrl = config?.webhookUrl
+        if (webhookUrl.isNullOrBlank()) {
+            Log.d(TAG, "No webhook URL configured, skipping status report")
+            return
+        }
+        
+        scope.launch(Dispatchers.IO) {
+            try {
+                val status = getCurrentStatus()
+                val statusWithDeviceId = mapOf(
+                    "device_id" to (config?.deviceId ?: "unknown"),
+                    "online" to status.online,
+                    "active" to status.active,
+                    "current_image" to status.currentImage,
+                    "current_image_url" to status.currentImageUrl,
+                    "profile" to status.profile,
+                    "last_refresh" to status.lastRefresh,
+                    "mac_address" to status.macAddress,
+                    "ip_address" to status.ipAddress,
+                    "display_width" to status.displayWidth,
+                    "display_height" to status.displayHeight
+                )
+                
+                val json = gson.toJson(statusWithDeviceId)
+                val request = Request.Builder()
+                    .url(webhookUrl)
+                    .post(json.toRequestBody("application/json".toMediaType()))
+                    .build()
+                
+                val response = httpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    Log.d(TAG, "Status reported to HA successfully")
+                } else {
+                    Log.w(TAG, "Failed to report status to HA: ${response.code}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reporting status to HA: ${e.message}", e)
+            }
+        }
     }
     
     private fun resetSlideshowTimer() {
