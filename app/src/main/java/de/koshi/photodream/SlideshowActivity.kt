@@ -1,10 +1,13 @@
 package de.koshi.photodream
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.GestureDetector
@@ -21,7 +24,9 @@ import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.model.LazyHeaders
 import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
+import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
+import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
@@ -62,7 +67,34 @@ class SlideshowActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     
+    private var httpService: HttpServerService? = null
+    private var serviceBound = false
+    
     private lateinit var gestureDetector: GestureDetector
+    
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val localBinder = binder as HttpServerService.LocalBinder
+            httpService = localBinder.getService().apply {
+                // Setup callbacks - same as DreamService
+                onConfigReceived = { newConfig -> applyConfigLive(newConfig) }
+                onRefreshConfig = { refreshConfig() }
+                onNextImage = { showNextImage() }
+                onSetProfile = { profile -> setProfile(profile) }
+                getStatus = { getCurrentStatus() }
+                
+                // Update status to show we're active
+                updateStatus(getCurrentStatus())
+            }
+            serviceBound = true
+            Log.d(TAG, "HttpServerService connected")
+        }
+        
+        override fun onServiceDisconnected(name: ComponentName?) {
+            httpService = null
+            serviceBound = false
+        }
+    }
     
     private val gestureListener = object : GestureDetector.SimpleOnGestureListener() {
         private val SWIPE_THRESHOLD = 100
@@ -135,6 +167,7 @@ class SlideshowActivity : AppCompatActivity() {
         gestureDetector = GestureDetector(this, gestureListener)
         
         setupUI()
+        bindHttpService()
         loadConfigAndStart()
     }
     
@@ -142,7 +175,28 @@ class SlideshowActivity : AppCompatActivity() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
         scope.cancel()
+        unbindHttpService()
         super.onDestroy()
+    }
+    
+    private fun bindHttpService() {
+        val intent = Intent(this, HttpServerService::class.java)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+    
+    private fun unbindHttpService() {
+        if (serviceBound) {
+            httpService?.apply {
+                onConfigReceived = null
+                onRefreshConfig = null
+                onNextImage = null
+                onSetProfile = null
+                getStatus = null
+                updateStatus(DeviceStatus(online = true, active = false))
+            }
+            unbindService(serviceConnection)
+            serviceBound = false
+        }
     }
     
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -189,6 +243,9 @@ class SlideshowActivity : AppCompatActivity() {
                 }
                 
                 config?.let { cfg ->
+                    // Share config with HTTP service
+                    httpService?.updateConfig(cfg)
+                    
                     immichClient = ImmichClient(cfg.immich)
                     setupClock(cfg.display)
                     loadPlaylist(cfg.profile)
@@ -317,5 +374,65 @@ class SlideshowActivity : AppCompatActivity() {
                 Gravity.CENTER
             )
         }
+    }
+    
+    // --- Callbacks for HTTP Server (same as DreamService) ---
+    
+    private fun applyConfigLive(newConfig: DeviceConfig) {
+        Log.i(TAG, "Applying config live: clock=${newConfig.display.clock}, interval=${newConfig.display.intervalSeconds}")
+        
+        val oldProfile = config?.profile?.name
+        config = newConfig
+        
+        // Apply display settings immediately
+        setupClock(newConfig.display)
+        
+        // Reset slideshow timer with new interval
+        resetSlideshowTimer()
+        
+        // If profile changed, reload playlist
+        if (oldProfile != newConfig.profile.name) {
+            Log.i(TAG, "Profile changed, reloading playlist")
+            scope.launch {
+                immichClient = ImmichClient(newConfig.immich)
+                loadPlaylist(newConfig.profile)
+            }
+        }
+        
+        // Update HTTP service
+        httpService?.updateConfig(newConfig)
+        httpService?.updateStatus(getCurrentStatus())
+    }
+    
+    private fun refreshConfig() {
+        scope.launch {
+            config = ConfigManager.loadConfig(this@SlideshowActivity, forceRefresh = true)
+            config?.let { cfg ->
+                immichClient = ImmichClient(cfg.immich)
+                loadPlaylist(cfg.profile)
+            }
+        }
+    }
+    
+    private fun setProfile(profileName: String) {
+        Log.i(TAG, "Profile change requested: $profileName")
+        refreshConfig()
+    }
+    
+    private fun getCurrentStatus(): DeviceStatus {
+        val currentAsset = playlist.getOrNull(currentIndex)
+        val resolution = DeviceInfo.getDisplayResolution(this)
+        return DeviceStatus(
+            online = true,
+            active = true,
+            currentImage = currentAsset?.id,
+            currentImageUrl = currentAsset?.getThumbnailUrl(config?.immich?.baseUrl ?: ""),
+            profile = config?.profile?.name,
+            lastRefresh = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()),
+            macAddress = DeviceInfo.getMacAddress(this),
+            ipAddress = DeviceInfo.getIpAddress(this),
+            displayWidth = resolution.first,
+            displayHeight = resolution.second
+        )
     }
 }
