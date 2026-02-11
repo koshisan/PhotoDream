@@ -266,6 +266,9 @@ class SlideshowActivity : AppCompatActivity() {
         
         clockView.visibility = View.VISIBLE
         
+        // Set font size from config
+        clockView.textSize = display.clockFontSize.toFloat()
+        
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT

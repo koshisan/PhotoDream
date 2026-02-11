@@ -273,6 +273,9 @@ class PhotoDreamService : DreamService() {
         
         clockView.visibility = View.VISIBLE
         
+        // Set font size from config
+        clockView.textSize = display.clockFontSize.toFloat()
+        
         // Position clock based on config (0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right)
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,

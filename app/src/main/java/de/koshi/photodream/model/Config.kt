@@ -34,6 +34,9 @@ data class DisplayConfig(
     @SerializedName("clock_format")
     val clockFormat: String = "24h", // "12h" or "24h"
     
+    @SerializedName("clock_font_size")
+    val clockFontSize: Int = 32, // Font size in sp
+    
     val weather: Boolean = false,
     
     @SerializedName("interval_seconds")
