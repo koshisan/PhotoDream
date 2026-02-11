@@ -3,6 +3,7 @@ package de.koshi.photodream.api
 import android.util.Log
 import de.koshi.photodream.model.Asset
 import de.koshi.photodream.model.ImmichConfig
+import de.koshi.photodream.model.SearchFilter
 import de.koshi.photodream.model.SmartSearchRequest
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -71,7 +72,42 @@ class ImmichClient(private val config: ImmichConfig) {
     }
     
     /**
+     * Search using a SearchFilter object (from Immich URL)
+     */
+    suspend fun searchWithFilter(filter: SearchFilter?, limit: Int = 200): List<Asset> {
+        if (filter == null) {
+            Log.w(TAG, "No search filter provided")
+            return emptyList()
+        }
+        
+        return try {
+            val request = SmartSearchRequest(
+                query = filter.query,
+                size = limit,
+                type = filter.type ?: "IMAGE",
+                personIds = filter.personIds,
+                tagIds = filter.tagIds,
+                albumId = filter.albumId,
+                city = filter.city,
+                country = filter.country,
+                state = filter.state,
+                takenAfter = filter.takenAfter,
+                takenBefore = filter.takenBefore,
+                isArchived = filter.isArchived,
+                isFavorite = filter.isFavorite
+            )
+            val response = api.smartSearch(request)
+            Log.d(TAG, "Search with filter returned ${response.assets.count} results")
+            response.assets.items
+        } catch (e: Exception) {
+            Log.e(TAG, "Search with filter failed: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
      * Search multiple queries and combine results (deduplicated)
+     * @deprecated Use searchWithFilter instead
      */
     suspend fun searchMultiple(queries: List<String>, limitPerQuery: Int = 100): List<Asset> {
         val allAssets = mutableMapOf<String, Asset>()

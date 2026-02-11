@@ -220,8 +220,8 @@ class PhotoDreamService : DreamService() {
         withContext(Dispatchers.IO) {
             val client = immichClient ?: return@withContext
             
-            // Search using profile queries
-            val allAssets = client.searchMultiple(profile.searchQueries, limitPerQuery = 200)
+            // Search using profile search filter (from Immich URL)
+            val allAssets = client.searchWithFilter(profile.searchFilter, limit = 500)
             
             // Filter by excluded paths
             val filtered = allAssets.filter { asset ->
@@ -234,7 +234,7 @@ class PhotoDreamService : DreamService() {
             playlist = SmartShuffle.shuffle(filtered)
             currentIndex = 0
             
-            Log.i(TAG, "Loaded playlist with ${playlist.size} images")
+            Log.i(TAG, "Loaded playlist with ${playlist.size} images (filter: ${profile.searchFilter})")
         }
     }
     

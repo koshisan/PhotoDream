@@ -48,11 +48,51 @@ data class DisplayConfig(
 data class ProfileConfig(
     val name: String,
     
-    @SerializedName("search_queries")
-    val searchQueries: List<String> = emptyList(),
+    @SerializedName("search_filter")
+    val searchFilter: SearchFilter? = null,
     
     @SerializedName("exclude_paths")
     val excludePaths: List<String> = emptyList()
+)
+
+/**
+ * Immich search filter - matches the Immich smart search API
+ */
+data class SearchFilter(
+    val query: String? = null,
+    
+    @SerializedName("personIds")
+    val personIds: List<String>? = null,
+    
+    @SerializedName("tagIds") 
+    val tagIds: List<String>? = null,
+    
+    @SerializedName("albumId")
+    val albumId: String? = null,
+    
+    @SerializedName("city")
+    val city: String? = null,
+    
+    @SerializedName("country")
+    val country: String? = null,
+    
+    @SerializedName("state")
+    val state: String? = null,
+    
+    @SerializedName("takenAfter")
+    val takenAfter: String? = null,
+    
+    @SerializedName("takenBefore")
+    val takenBefore: String? = null,
+    
+    @SerializedName("isArchived")
+    val isArchived: Boolean? = null,
+    
+    @SerializedName("isFavorite")
+    val isFavorite: Boolean? = null,
+    
+    @SerializedName("type")
+    val type: String? = null  // IMAGE or VIDEO
 )
 
 /**

@@ -69,11 +69,41 @@ enum class ThumbnailSize(val value: String) {
 }
 
 /**
- * Smart search request body
+ * Smart search request body - supports full Immich search filter
  */
 data class SmartSearchRequest(
-    val query: String,
+    val query: String? = null,
     val page: Int = 1,
     val size: Int = 100,
-    val type: String = "IMAGE"
+    val type: String = "IMAGE",
+    
+    @SerializedName("personIds")
+    val personIds: List<String>? = null,
+    
+    @SerializedName("tagIds")
+    val tagIds: List<String>? = null,
+    
+    @SerializedName("albumId")
+    val albumId: String? = null,
+    
+    @SerializedName("city")
+    val city: String? = null,
+    
+    @SerializedName("country")
+    val country: String? = null,
+    
+    @SerializedName("state")
+    val state: String? = null,
+    
+    @SerializedName("takenAfter")
+    val takenAfter: String? = null,
+    
+    @SerializedName("takenBefore")
+    val takenBefore: String? = null,
+    
+    @SerializedName("isArchived")
+    val isArchived: Boolean? = null,
+    
+    @SerializedName("isFavorite")
+    val isFavorite: Boolean? = null
 )
