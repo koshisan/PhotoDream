@@ -103,9 +103,7 @@ class PhotoDreamService : DreamService() {
                     Log.d(TAG, "Swipe left - next image")
                     showNextImage()
                 }
-                
-                // Reset slideshow timer on manual navigation
-                resetSlideshowTimer()
+                // Timer reset happens automatically in showCurrentImage()
                 return true
             }
             return false
@@ -355,6 +353,9 @@ class PhotoDreamService : DreamService() {
             .into(imageView)
         
         Log.d(TAG, "Showing image ${currentIndex + 1}/${playlist.size}: ${asset.id}")
+        
+        // Reset slideshow timer on ANY image change
+        resetSlideshowTimer()
         
         // Report status to Home Assistant
         reportStatusToHA()
