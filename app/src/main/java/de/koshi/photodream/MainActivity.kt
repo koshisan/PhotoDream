@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editDeviceId: TextInputEditText
     private lateinit var editServerPort: TextInputEditText
     private lateinit var btnRegister: MaterialButton
+    private lateinit var btnStartSlideshow: MaterialButton
     private lateinit var cardStatus: MaterialCardView
     private lateinit var txtStatusTitle: TextView
     private lateinit var txtStatus: TextView
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity() {
         editDeviceId = findViewById(R.id.editDeviceId)
         editServerPort = findViewById(R.id.editServerPort)
         btnRegister = findViewById(R.id.btnRegister)
+        btnStartSlideshow = findViewById(R.id.btnStartSlideshow)
         cardStatus = findViewById(R.id.cardStatus)
         txtStatusTitle = findViewById(R.id.txtStatusTitle)
         txtStatus = findViewById(R.id.txtStatus)
@@ -56,8 +58,9 @@ class MainActivity : AppCompatActivity() {
         // Check if already configured
         checkExistingConfig()
         
-        // Setup button
+        // Setup buttons
         btnRegister.setOnClickListener { registerWithHA() }
+        btnStartSlideshow.setOnClickListener { SlideshowActivity.start(this) }
     }
     
     private fun startHttpServer() {

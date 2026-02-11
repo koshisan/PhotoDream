@@ -35,6 +35,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- Slideshow Activity (can be started via intent) -->
+        <activity
+            android:name=".SlideshowActivity"
+            android:exported="true"
+            android:theme="@style/Theme.PhotoDream.Fullscreen"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="de.koshi.photodream.START_SLIDESHOW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- DreamService (Screensaver) -->
         <service

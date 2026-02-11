@@ -75,6 +75,15 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="Register with Home Assistant" />
+        
+        <!-- Start Slideshow Button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStartSlideshow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:text="▶ Start Slideshow Now" />
 
         <!-- Status Card -->
         <com.google.android.material.card.MaterialCardView
