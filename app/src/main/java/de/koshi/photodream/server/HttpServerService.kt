@@ -69,6 +69,13 @@ class HttpServerService : Service() {
     // Status tracking (persists even when DreamService is not bound)
     private var currentStatus = DeviceStatus(online = true, active = false)
     
+    // Config for image proxy (to get API key for Immich)
+    private var currentConfig: DeviceConfig? = null
+    
+    fun updateConfig(config: DeviceConfig) {
+        currentConfig = config
+    }
+    
     // Callbacks for DreamService (set when DreamService binds)
     var onConfigReceived: ((DeviceConfig) -> Unit)? = null
     var onRefreshConfig: (() -> Unit)? = null
@@ -185,6 +192,7 @@ class HttpServerService : Service() {
                 when {
                     method == Method.GET && uri == "/status" -> handleStatus()
                     method == Method.GET && uri == "/health" -> handleHealth()
+                    method == Method.GET && uri == "/current-image" -> handleCurrentImage()
                     method == Method.POST && uri == "/configure" -> handleConfigure(session)
                     method == Method.POST && uri == "/refresh-config" -> handleRefreshConfig()
                     method == Method.POST && uri == "/next" -> handleNext()
@@ -273,6 +281,71 @@ class HttpServerService : Service() {
         
         private fun handleHealth(): Response {
             return jsonResponse(mapOf("status" to "ok", "service" to "PhotoDream"))
+        }
+        
+        private fun handleCurrentImage(): Response {
+            val imageUrl = currentStatus.currentImageUrl
+            val apiKey = currentConfig?.immich?.apiKey
+            
+            if (imageUrl.isNullOrBlank()) {
+                return newFixedLengthResponse(
+                    Response.Status.NOT_FOUND,
+                    MIME_PLAINTEXT,
+                    "No current image"
+                )
+            }
+            
+            if (apiKey.isNullOrBlank()) {
+                return newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR,
+                    MIME_PLAINTEXT,
+                    "No API key configured"
+                )
+            }
+            
+            // Fetch image from Immich with authentication
+            return try {
+                val request = okhttp3.Request.Builder()
+                    .url(imageUrl)
+                    .addHeader("x-api-key", apiKey)
+                    .build()
+                
+                val response = okhttp3.OkHttpClient().newCall(request).execute()
+                
+                if (response.isSuccessful) {
+                    val body = response.body
+                    val contentType = response.header("Content-Type", "image/jpeg")
+                    val bytes = body?.bytes()
+                    
+                    if (bytes != null) {
+                        newFixedLengthResponse(
+                            Response.Status.OK,
+                            contentType,
+                            java.io.ByteArrayInputStream(bytes),
+                            bytes.size.toLong()
+                        )
+                    } else {
+                        newFixedLengthResponse(
+                            Response.Status.INTERNAL_ERROR,
+                            MIME_PLAINTEXT,
+                            "Empty response from Immich"
+                        )
+                    }
+                } else {
+                    newFixedLengthResponse(
+                        Response.Status.lookup(response.code) ?: Response.Status.INTERNAL_ERROR,
+                        MIME_PLAINTEXT,
+                        "Immich returned: ${response.code}"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching image: ${e.message}", e)
+                newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR,
+                    MIME_PLAINTEXT,
+                    "Error fetching image: ${e.message}"
+                )
+            }
         }
         
         private fun jsonResponse(data: Any): Response {

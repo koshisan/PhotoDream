@@ -244,6 +244,9 @@ class PhotoDreamService : DreamService() {
                 
                 // Setup Immich client
                 config?.let { cfg ->
+                    // Share config with HTTP service for image proxy
+                    httpService?.updateConfig(cfg)
+                    
                     immichClient = ImmichClient(cfg.immich)
                     
                     // Setup clock
@@ -468,7 +471,8 @@ class PhotoDreamService : DreamService() {
             }
         }
         
-        // Update HTTP service status
+        // Update HTTP service with config (for image proxy) and status
+        httpService?.updateConfig(newConfig)
         httpService?.updateStatus(getCurrentStatus())
     }
     
