@@ -1,19 +1,24 @@
 package de.koshi.photodream.server
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
+import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
+import de.koshi.photodream.util.ConfigManager
 
 /**
  * HTTP Server Service for Home Assistant communication
  * 
  * Endpoints:
  * - GET /status - Returns current device status
+ * - GET /health - Health check
+ * - POST /configure - Receive config from HA (auto-discovery)
  * - POST /refresh-config - Triggers config refresh from HA
  * - POST /next - Advances to next image
  * - POST /set-profile - Changes active profile
@@ -30,6 +35,7 @@ class HttpServerService : Service() {
     private val gson = Gson()
     
     // Callbacks for DreamService
+    var onConfigReceived: ((DeviceConfig) -> Unit)? = null
     var onRefreshConfig: (() -> Unit)? = null
     var onNextImage: (() -> Unit)? = null
     var onSetProfile: ((String) -> Unit)? = null
@@ -86,10 +92,11 @@ class HttpServerService : Service() {
             return try {
                 when {
                     method == Method.GET && uri == "/status" -> handleStatus()
+                    method == Method.GET && uri == "/health" -> handleHealth()
+                    method == Method.POST && uri == "/configure" -> handleConfigure(session)
                     method == Method.POST && uri == "/refresh-config" -> handleRefreshConfig()
                     method == Method.POST && uri == "/next" -> handleNext()
                     method == Method.POST && uri == "/set-profile" -> handleSetProfile(session)
-                    method == Method.GET && uri == "/health" -> handleHealth()
                     else -> newFixedLengthResponse(
                         Response.Status.NOT_FOUND,
                         MIME_PLAINTEXT,
@@ -109,6 +116,33 @@ class HttpServerService : Service() {
         private fun handleStatus(): Response {
             val status = getStatus?.invoke() ?: DeviceStatus(online = true)
             return jsonResponse(status)
+        }
+        
+        private fun handleConfigure(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+            
+            val postData = body["postData"] ?: "{}"
+            Log.i(TAG, "Received config from HA: ${postData.take(200)}...")
+            
+            return try {
+                val config = gson.fromJson(postData, DeviceConfig::class.java)
+                
+                // Save config
+                ConfigManager.saveConfigFromHA(this@HttpServerService, config)
+                
+                // Notify DreamService
+                onConfigReceived?.invoke(config)
+                
+                jsonResponse(mapOf("success" to true, "message" to "Config received"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse config: ${e.message}", e)
+                newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Invalid config: ${e.message}"
+                )
+            }
         }
         
         private fun handleRefreshConfig(): Response {

@@ -38,7 +38,7 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Device ID"
+            android:hint="Device ID (e.g., kitchen, bedroom)"
             android:layout_marginTop="16dp"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
@@ -51,27 +51,11 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Webhook ID -->
+        <!-- Server Port (collapsible/advanced) -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Webhook ID (from HA)"
-            android:layout_marginTop="16dp"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/editWebhookId"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="text" />
-
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <!-- Server Port -->
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="HTTP Server Port"
+            android:hint="HTTP Server Port (advanced)"
             android:layout_marginTop="16dp"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
@@ -84,37 +68,55 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Save Button -->
+        <!-- Register Button -->
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSave"
+            android:id="@+id/btnRegister"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="Save Settings" />
+            android:text="Register with Home Assistant" />
 
-        <!-- Test Connection Button -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnTest"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Test Connection"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
-
-        <!-- Status -->
-        <TextView
-            android:id="@+id/txtStatus"
+        <!-- Status Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:textColor="@android:color/darker_gray" />
+            android:visibility="gone"
+            app:cardElevation="2dp"
+            app:cardCornerRadius="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:id="@+id/txtStatusTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Status"
+                    android:textStyle="bold"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/txtStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@android:color/darker_gray" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Info -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="To use PhotoDream as a screensaver:\n\n1. Go to Settings → Display → Screen saver\n2. Select 'PhotoDream'\n3. Configure when to start (while charging, docked, etc.)"
+            android:text="How it works:\n\n1. Enter your Home Assistant URL and a Device ID\n2. Click 'Register' - the device will appear in Home Assistant\n3. In Home Assistant, configure the device (select profile, display settings)\n4. The configuration will be sent back automatically\n5. Go to Settings → Display → Screen saver and select 'PhotoDream'"
             android:textColor="@android:color/darker_gray"
             android:textSize="14sp" />
 
