@@ -202,6 +202,10 @@ class SlideshowController(
             setTextColor(Color.WHITE)
             textSize = 32f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
         
         dateView = TextView(context).apply {
