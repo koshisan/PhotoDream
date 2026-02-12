@@ -16,13 +16,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.load.model.LazyHeaders
 import de.koshi.photodream.api.ImmichClient
+import de.koshi.photodream.ui.SlideshowRenderer
 import de.koshi.photodream.model.*
 import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
@@ -56,8 +53,9 @@ class SlideshowActivity : AppCompatActivity() {
     }
     
     private lateinit var rootLayout: FrameLayout
-    private lateinit var imageView: ImageView
+    private lateinit var imageContainer: FrameLayout
     private lateinit var clockView: TextView
+    private lateinit var renderer: SlideshowRenderer
     
     private var config: DeviceConfig? = null
     private var immichClient: ImmichClient? = null
@@ -174,6 +172,7 @@ class SlideshowActivity : AppCompatActivity() {
     override fun onDestroy() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
+        renderer.cleanup()
         scope.cancel()
         unbindHttpService()
         super.onDestroy()
@@ -211,8 +210,8 @@ class SlideshowActivity : AppCompatActivity() {
             setBackgroundColor(Color.BLACK)
         }
         
-        imageView = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
+        // Container for the slideshow renderer (holds two ImageViews)
+        imageContainer = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -226,10 +225,26 @@ class SlideshowActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         
-        rootLayout.addView(imageView)
+        rootLayout.addView(imageContainer)
         rootLayout.addView(clockView)
         
         setContentView(rootLayout)
+        
+        // Initialize renderer after views are added
+        renderer = SlideshowRenderer(this, imageContainer).apply {
+            crossfadeDuration = 800L
+            panEnabled = true
+            panDuration = 10000L // Pan over 10 seconds
+            
+            onImageShown = { asset ->
+                Log.d(TAG, "Image shown: ${asset.id}")
+                httpService?.updateStatus(getCurrentStatus())
+            }
+            
+            onImageError = { error ->
+                Log.e(TAG, "Image load error: $error")
+            }
+        }
     }
     
     private fun loadConfigAndStart() {
@@ -318,30 +333,25 @@ class SlideshowActivity : AppCompatActivity() {
             return
         }
         
-        showCurrentImage()
+        // First image without transition
+        showCurrentImage(withTransition = false)
         
         val interval = (config?.display?.intervalSeconds ?: 30) * 1000L
         handler.postDelayed(slideshowRunnable, interval)
     }
     
-    private fun showCurrentImage() {
+    private fun showCurrentImage(withTransition: Boolean = true) {
         if (playlist.isEmpty()) return
         
         val asset = playlist[currentIndex]
+        val cfg = config ?: return
         
-        val url = asset.getThumbnailUrl(config?.immich?.baseUrl ?: "", ThumbnailSize.PREVIEW)
-        
-        val glideUrl = GlideUrl(
-            url,
-            LazyHeaders.Builder()
-                .addHeader("x-api-key", config?.immich?.apiKey ?: "")
-                .build()
+        renderer.showImage(
+            asset = asset,
+            baseUrl = cfg.immich.baseUrl,
+            apiKey = cfg.immich.apiKey,
+            withTransition = withTransition
         )
-        
-        Glide.with(this)
-            .load(glideUrl)
-            .centerCrop()
-            .into(imageView)
         
         Log.d(TAG, "Showing image ${currentIndex + 1}/${playlist.size}: ${asset.id}")
         

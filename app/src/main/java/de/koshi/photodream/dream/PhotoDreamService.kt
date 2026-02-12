@@ -15,13 +15,10 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.TextView
 import kotlin.math.abs
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.load.model.LazyHeaders
 import de.koshi.photodream.api.ImmichClient
+import de.koshi.photodream.ui.SlideshowRenderer
 import de.koshi.photodream.model.*
 import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
@@ -46,8 +43,9 @@ class PhotoDreamService : DreamService() {
     }
     
     private lateinit var rootLayout: FrameLayout
-    private lateinit var imageView: ImageView
+    private lateinit var imageContainer: FrameLayout
     private lateinit var clockView: TextView
+    private lateinit var renderer: SlideshowRenderer
     
     private var config: DeviceConfig? = null
     private var immichClient: ImmichClient? = null
@@ -177,6 +175,7 @@ class PhotoDreamService : DreamService() {
     override fun onDetachedFromWindow() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
+        renderer.cleanup()
         scope.cancel()
         unbindHttpService()
         super.onDetachedFromWindow()
@@ -187,8 +186,8 @@ class PhotoDreamService : DreamService() {
             setBackgroundColor(Color.BLACK)
         }
         
-        imageView = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
+        // Container for the slideshow renderer (holds two ImageViews)
+        imageContainer = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -202,10 +201,27 @@ class PhotoDreamService : DreamService() {
             visibility = View.GONE
         }
         
-        rootLayout.addView(imageView)
+        rootLayout.addView(imageContainer)
         rootLayout.addView(clockView)
         
         setContentView(rootLayout)
+        
+        // Initialize renderer after views are added
+        renderer = SlideshowRenderer(this, imageContainer).apply {
+            crossfadeDuration = 800L
+            panEnabled = true
+            panDuration = 10000L // Pan over 10 seconds
+            
+            onImageShown = { asset ->
+                Log.d(TAG, "Image shown: ${asset.id}")
+                reportStatusToHA()
+                httpService?.updateStatus(getCurrentStatus())
+            }
+            
+            onImageError = { error ->
+                Log.e(TAG, "Image load error: $error")
+            }
+        }
     }
     
     private fun bindHttpService() {
@@ -330,42 +346,31 @@ class PhotoDreamService : DreamService() {
             return
         }
         
-        // Show first image
-        showCurrentImage()
+        // Show first image without transition
+        showCurrentImage(withTransition = false)
         
         // Schedule next image
         val interval = (config?.display?.intervalSeconds ?: 30) * 1000L
         handler.postDelayed(slideshowRunnable, interval)
     }
     
-    private fun showCurrentImage() {
+    private fun showCurrentImage(withTransition: Boolean = true) {
         if (playlist.isEmpty()) return
         
         val asset = playlist[currentIndex]
-        val client = immichClient ?: return
+        val cfg = config ?: return
         
-        val url = asset.getThumbnailUrl(config?.immich?.baseUrl ?: "", ThumbnailSize.PREVIEW)
-        
-        // Build Glide URL with auth headers
-        val glideUrl = GlideUrl(
-            url,
-            LazyHeaders.Builder()
-                .addHeader("x-api-key", config?.immich?.apiKey ?: "")
-                .build()
+        renderer.showImage(
+            asset = asset,
+            baseUrl = cfg.immich.baseUrl,
+            apiKey = cfg.immich.apiKey,
+            withTransition = withTransition
         )
-        
-        Glide.with(this)
-            .load(glideUrl)
-            .centerCrop()
-            .into(imageView)
         
         Log.d(TAG, "Showing image ${currentIndex + 1}/${playlist.size}: ${asset.id}")
         
         // Reset slideshow timer on ANY image change
         resetSlideshowTimer()
-        
-        // Report status to Home Assistant
-        reportStatusToHA()
     }
     
     private fun showNextImage() {
