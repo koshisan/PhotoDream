@@ -25,6 +25,7 @@ import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
+import de.koshi.photodream.BuildConfig
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
