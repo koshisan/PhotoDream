@@ -421,12 +421,27 @@ class SlideshowController(
             weatherTemp.text = tempText
             weatherTemp.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
             weatherTemp.visibility = View.VISIBLE
+            weatherTemp.gravity = Gravity.CENTER
+            
+            // Reset order: icon first, temp second
+            rightColumn.removeAllViews()
+            rightColumn.addView(weatherIcon)
+            rightColumn.addView(weatherTemp)
         } else {
-            // 1-row mode: icon + temp together
-            weatherIcon.text = "$icon $tempText"
+            // 1-row mode: temp small on top-left, icon below
+            // Stack: temp (small, left-aligned) then icon (centered)
+            weatherTemp.text = tempText
+            weatherTemp.textSize = (display.clockFontSize * 0.25f).coerceAtLeast(10f)
+            weatherTemp.visibility = View.VISIBLE
+            weatherTemp.gravity = Gravity.START  // Left-aligned
+            
+            weatherIcon.text = icon
             weatherIcon.textSize = display.clockFontSize * 0.7f
             
-            weatherTemp.visibility = View.GONE
+            // Reorder: temp first (top), icon second (bottom)
+            rightColumn.removeAllViews()
+            rightColumn.addView(weatherTemp)
+            rightColumn.addView(weatherIcon)
         }
     }
     
