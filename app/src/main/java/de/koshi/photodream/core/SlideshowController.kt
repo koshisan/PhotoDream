@@ -646,7 +646,9 @@ class SlideshowController(
     private fun applyConfigLive(newConfig: DeviceConfig) {
         Log.i(TAG, "Applying config live: clock=${newConfig.display.clock}, interval=${newConfig.display.intervalSeconds}")
         
-        val oldProfile = config?.profile?.name
+        // Compare profile by ID (unique) not just name (could be duplicate across Immich instances)
+        val oldProfileId = config?.profile?.id
+        val newProfileId = newConfig.profile.id
         val oldPanSpeed = config?.display?.panSpeed
         config = newConfig
         
@@ -654,8 +656,8 @@ class SlideshowController(
         applyPanSpeed(newConfig.display.panSpeed, reload = oldPanSpeed != newConfig.display.panSpeed)
         resetSlideshowTimer()
         
-        if (oldProfile != newConfig.profile.name) {
-            Log.i(TAG, "Profile changed from $oldProfile to ${newConfig.profile.name}, reloading playlist")
+        if (oldProfileId != newProfileId) {
+            Log.i(TAG, "Profile changed from $oldProfileId to $newProfileId (${newConfig.profile.name}), reloading playlist")
             scope.launch {
                 immichClient = ImmichClient(newConfig.immich)
                 loadPlaylist(newConfig.profile)

@@ -71,6 +71,8 @@ data class WeatherConfig(
 )
 
 data class ProfileConfig(
+    val id: String? = null,  // Unique profile identifier (entry_id + profile_name)
+    
     val name: String,
     
     @SerializedName("search_filter")
