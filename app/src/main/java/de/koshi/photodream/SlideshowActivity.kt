@@ -308,10 +308,15 @@ class SlideshowActivity : AppCompatActivity() {
      * panSpeed: 0.0-2.0, where 1.0 = 10 seconds per pan cycle
      * Higher = faster panning
      */
-    private fun applyPanSpeed(panSpeed: Float) {
+    private fun applyPanSpeed(panSpeed: Float, reload: Boolean = false) {
         val effectiveSpeed = panSpeed.coerceIn(0.1f, 2.0f)
         renderer.panDuration = (10000L / effectiveSpeed).toLong()
         Log.d(TAG, "Pan speed set to $panSpeed -> duration ${renderer.panDuration}ms")
+        
+        if (reload && playlist.isNotEmpty()) {
+            // Reload current image to apply new pan speed immediately
+            showCurrentImage(withTransition = false)
+        }
     }
     
     private fun updateClock() {
@@ -411,7 +416,7 @@ class SlideshowActivity : AppCompatActivity() {
         
         // Apply display settings immediately
         setupClock(newConfig.display)
-        applyPanSpeed(newConfig.display.panSpeed)
+        applyPanSpeed(newConfig.display.panSpeed, reload = true)
         
         // Reset slideshow timer with new interval
         resetSlideshowTimer()
