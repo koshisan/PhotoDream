@@ -64,6 +64,7 @@ class SlideshowController(
     
     // State
     private var config: DeviceConfig? = null
+    private var lastReceivedConfigJson: String? = null  // For debugging - raw JSON of last config push
     private var immichClient: ImmichClient? = null
     private var playlist: List<Asset> = emptyList()
     private var currentIndex = 0
@@ -646,6 +647,9 @@ class SlideshowController(
     private fun applyConfigLive(newConfig: DeviceConfig) {
         Log.i(TAG, "Applying config live: clock=${newConfig.display.clock}, interval=${newConfig.display.intervalSeconds}")
         
+        // Store raw JSON for debugging (accessible via /status endpoint)
+        lastReceivedConfigJson = gson.toJson(newConfig)
+        
         // Compare profile by ID (unique) not just name (could be duplicate across Immich instances)
         val oldProfileId = config?.profile?.id
         val newProfileId = newConfig.profile.id
@@ -710,7 +714,8 @@ class SlideshowController(
             ipAddress = DeviceInfo.getIpAddress(context),
             displayWidth = resolution.first,
             displayHeight = resolution.second,
-            appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME
+            appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME,
+            lastReceivedConfig = lastReceivedConfigJson
         )
     }
 }

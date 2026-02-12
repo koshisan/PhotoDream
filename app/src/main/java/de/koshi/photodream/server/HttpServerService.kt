@@ -71,6 +71,7 @@ class HttpServerService : Service() {
     
     // Config for image proxy (to get API key for Immich)
     private var currentConfig: DeviceConfig? = null
+    private var lastReceivedConfigJson: String? = null  // Raw JSON for debugging via /health
     
     // Webhook status tracking for debugging
     var lastWebhookAttempt: Long = 0
@@ -247,6 +248,7 @@ class HttpServerService : Service() {
                 
                 // Update runtime config (for /health endpoint)
                 currentConfig = config
+                lastReceivedConfigJson = postData  // Store raw JSON for debugging
                 
                 // Notify active slideshow on main thread (if running)
                 mainHandler.post { onConfigReceived?.invoke(config) }
@@ -296,6 +298,11 @@ class HttpServerService : Service() {
         }
         
         private fun handleHealth(): Response {
+            // Parse stored JSON to include as nested object (not escaped string)
+            val configObject = lastReceivedConfigJson?.let {
+                try { gson.fromJson(it, Map::class.java) } catch (e: Exception) { null }
+            }
+            
             return jsonResponse(mapOf(
                 "status" to "ok",
                 "service" to "PhotoDream",
@@ -306,7 +313,8 @@ class HttpServerService : Service() {
                 "webhook_last_success" to lastWebhookSuccess,
                 "webhook_last_error" to lastWebhookError,
                 "config_loaded" to (currentConfig != null),
-                "device_id" to currentConfig?.deviceId
+                "device_id" to currentConfig?.deviceId,
+                "last_received_config" to configObject
             ))
         }
         

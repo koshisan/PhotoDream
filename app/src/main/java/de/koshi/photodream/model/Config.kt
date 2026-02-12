@@ -171,5 +171,8 @@ data class DeviceStatus(
     val displayHeight: Int? = null,
     
     @SerializedName("app_version")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    
+    @SerializedName("last_received_config")
+    val lastReceivedConfig: String? = null  // Raw JSON of last config push for debugging
 )
