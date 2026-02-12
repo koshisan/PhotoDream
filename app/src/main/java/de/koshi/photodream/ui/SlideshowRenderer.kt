@@ -21,6 +21,7 @@ import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.model.LazyHeaders
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.target.Target
+import de.koshi.photodream.R
 import de.koshi.photodream.model.Asset
 import de.koshi.photodream.model.ThumbnailSize
 
