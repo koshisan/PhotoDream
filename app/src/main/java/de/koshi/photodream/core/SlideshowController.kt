@@ -293,7 +293,12 @@ class SlideshowController(
         if (display.date) {
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
-            (dateView.layoutParams as? LinearLayout.LayoutParams)?.topMargin = -4
+            dateView.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = -8  // Negative margin to pull date closer to clock
+            }
         } else {
             dateView.visibility = View.GONE
         }
