@@ -44,7 +44,9 @@ class PhotoDreamService : DreamService() {
     
     private lateinit var rootLayout: FrameLayout
     private lateinit var imageContainer: FrameLayout
+    private lateinit var clockContainer: android.widget.LinearLayout
     private lateinit var clockView: TextView
+    private lateinit var dateView: TextView
     private lateinit var renderer: SlideshowRenderer
     
     private var config: DeviceConfig? = null
@@ -194,15 +196,30 @@ class PhotoDreamService : DreamService() {
             )
         }
         
+        // Container for clock + date
+        clockContainer = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        
         clockView = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 32f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
+        }
+        
+        dateView = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setShadowLayer(4f, 2f, 2f, Color.BLACK)
             visibility = View.GONE
         }
         
+        clockContainer.addView(clockView)
+        clockContainer.addView(dateView)
+        
         rootLayout.addView(imageContainer)
-        rootLayout.addView(clockView)
+        rootLayout.addView(clockContainer)
         
         setContentView(rootLayout)
         
@@ -286,16 +303,33 @@ class PhotoDreamService : DreamService() {
     
     private fun setupClock(display: DisplayConfig) {
         if (!display.clock) {
-            clockView.visibility = View.GONE
+            clockContainer.visibility = View.GONE
             return
         }
         
-        clockView.visibility = View.VISIBLE
+        clockContainer.visibility = View.VISIBLE
         
         // Set font size from config
         clockView.textSize = display.clockFontSize.toFloat()
         
-        // Position clock based on config (0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right)
+        // Setup date if enabled
+        if (display.date) {
+            dateView.visibility = View.VISIBLE
+            dateView.textSize = (display.clockFontSize * 0.5f).coerceAtLeast(12f)
+        } else {
+            dateView.visibility = View.GONE
+        }
+        
+        // Text alignment based on position
+        val textAlignment = when (display.clockPosition) {
+            0, 3 -> View.TEXT_ALIGNMENT_VIEW_START  // Left positions
+            1, 4, 6 -> View.TEXT_ALIGNMENT_CENTER   // Center positions
+            else -> View.TEXT_ALIGNMENT_VIEW_END    // Right positions
+        }
+        clockView.textAlignment = textAlignment
+        dateView.textAlignment = textAlignment
+        
+        // Position: 0=top-left, 1=top-center, 2=top-right, 3=bottom-left, 4=bottom-center, 5=bottom-right, 6=center
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
@@ -304,12 +338,16 @@ class PhotoDreamService : DreamService() {
             setMargins(margin, margin, margin, margin)
             gravity = when (display.clockPosition) {
                 0 -> Gravity.TOP or Gravity.START
-                1 -> Gravity.TOP or Gravity.END
-                2 -> Gravity.BOTTOM or Gravity.START
-                else -> Gravity.BOTTOM or Gravity.END
+                1 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                2 -> Gravity.TOP or Gravity.END
+                3 -> Gravity.BOTTOM or Gravity.START
+                4 -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                5 -> Gravity.BOTTOM or Gravity.END
+                6 -> Gravity.CENTER
+                else -> Gravity.BOTTOM or Gravity.START
             }
         }
-        clockView.layoutParams = layoutParams
+        clockContainer.layoutParams = layoutParams
         
         // Start clock updates
         handler.post(clockRunnable)
@@ -332,9 +370,17 @@ class PhotoDreamService : DreamService() {
     }
     
     private fun updateClock() {
-        val format = if (config?.display?.clockFormat == "12h") "hh:mm a" else "HH:mm"
-        val sdf = SimpleDateFormat(format, Locale.getDefault())
-        clockView.text = sdf.format(Date())
+        val now = Date()
+        
+        // Update time
+        val timeFormat = if (config?.display?.clockFormat == "12h") "hh:mm a" else "HH:mm"
+        clockView.text = SimpleDateFormat(timeFormat, Locale.getDefault()).format(now)
+        
+        // Update date if visible
+        if (dateView.visibility == View.VISIBLE) {
+            val dateFormat = config?.display?.dateFormat ?: "dd.MM.yyyy"
+            dateView.text = SimpleDateFormat(dateFormat, Locale.getDefault()).format(now)
+        }
     }
     
     private suspend fun loadPlaylist(profile: ProfileConfig) {
@@ -534,7 +580,8 @@ class PhotoDreamService : DreamService() {
             macAddress = DeviceInfo.getMacAddress(this),
             ipAddress = DeviceInfo.getIpAddress(this),
             displayWidth = resolution.first,
-            displayHeight = resolution.second
+            displayHeight = resolution.second,
+            appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME
         )
     }
 }

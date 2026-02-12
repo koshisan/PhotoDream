@@ -29,13 +29,18 @@ data class DisplayConfig(
     val clock: Boolean = true,
     
     @SerializedName("clock_position")
-    val clockPosition: Int = 2, // 0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right
+    val clockPosition: Int = 2, // 0=top-left, 1=top-center, 2=top-right, 3=bottom-left, 4=bottom-center, 5=bottom-right, 6=center
     
     @SerializedName("clock_format")
     val clockFormat: String = "24h", // "12h" or "24h"
     
     @SerializedName("clock_font_size")
     val clockFontSize: Int = 32, // Font size in sp
+    
+    val date: Boolean = false, // Show date below clock
+    
+    @SerializedName("date_format")
+    val dateFormat: String = "dd.MM.yyyy", // Date format string
     
     val weather: Boolean = false,
     
@@ -144,5 +149,8 @@ data class DeviceStatus(
     val displayWidth: Int? = null,
     
     @SerializedName("display_height")
-    val displayHeight: Int? = null
+    val displayHeight: Int? = null,
+    
+    @SerializedName("app_version")
+    val appVersion: String? = null
 )
