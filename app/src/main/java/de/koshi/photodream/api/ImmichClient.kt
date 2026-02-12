@@ -3,6 +3,7 @@ package de.koshi.photodream.api
 import android.util.Log
 import de.koshi.photodream.model.Asset
 import de.koshi.photodream.model.ImmichConfig
+import de.koshi.photodream.model.RandomSearchRequest
 import de.koshi.photodream.model.SearchFilter
 import de.koshi.photodream.model.SmartSearchRequest
 import okhttp3.Interceptor
@@ -10,15 +11,23 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 /**
  * Client for Immich API communication
+ * 
+ * Display modes:
+ * - sequential: Fixed order from /api/search/smart (same images each time)
+ * - random: Random selection from /api/search/random (different each time)
+ * - smart_shuffle: Mix of random + recent (last 30 days), interleaved 50/50
  */
 class ImmichClient(private val config: ImmichConfig) {
     
     companion object {
         private const val TAG = "ImmichClient"
+        private const val RECENT_DAYS = 30
     }
     
     private val api: ImmichApi
@@ -53,47 +62,99 @@ class ImmichClient(private val config: ImmichConfig) {
     }
     
     /**
-     * Search for assets using smart search (ML-based)
+     * Load playlist based on display mode
+     * 
+     * @param filter Search filter from profile config
+     * @param mode Display mode: "sequential", "random", or "smart_shuffle"
+     * @param limit Total number of images to load
      */
-    suspend fun smartSearch(query: String, limit: Int = 100): List<Asset> {
-        return try {
-            val request = SmartSearchRequest(
-                query = query,
-                size = limit,
-                type = "IMAGE"
-            )
-            val response = api.smartSearch(request)
-            Log.d(TAG, "Smart search '$query' returned ${response.assets.count} results")
-            response.assets.items
-        } catch (e: Exception) {
-            Log.e(TAG, "Smart search failed: ${e.message}", e)
-            emptyList()
+    suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500): List<Asset> {
+        Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, filter=$filter")
+        
+        return when (mode) {
+            "sequential" -> loadSequential(filter, limit)
+            "random" -> loadRandom(filter, limit)
+            "smart_shuffle" -> loadSmartShuffle(filter, limit)
+            else -> {
+                Log.w(TAG, "Unknown display mode '$mode', defaulting to smart_shuffle")
+                loadSmartShuffle(filter, limit)
+            }
         }
     }
     
     /**
-     * Search using a SearchFilter object (from Immich URL)
-     * If filter is empty/null, fetches random assets instead.
+     * Sequential mode: Fixed "relevance" order from smart search
+     * Always returns the same images in the same order
      */
-    suspend fun searchWithFilter(filter: SearchFilter?, limit: Int = 200): List<Asset> {
-        // Check if filter has any actual criteria
-        val hasFilter = filter != null && (
-            filter.query != null ||
-            !filter.personIds.isNullOrEmpty() ||
-            !filter.tagIds.isNullOrEmpty() ||
-            filter.albumId != null ||
-            filter.city != null ||
-            filter.country != null ||
-            filter.state != null ||
-            filter.takenAfter != null ||
-            filter.takenBefore != null ||
-            filter.isArchived != null ||
-            filter.isFavorite != null
-        )
+    private suspend fun loadSequential(filter: SearchFilter?, limit: Int): List<Asset> {
+        return searchWithSmartApi(filter, limit)
+    }
+    
+    /**
+     * Random mode: Random selection each time
+     */
+    private suspend fun loadRandom(filter: SearchFilter?, limit: Int): List<Asset> {
+        return searchWithRandomApi(filter, limit)
+    }
+    
+    /**
+     * Smart shuffle mode: 50/50 mix of random + recent, interleaved
+     * Combines "throwback memories" with "recent photos"
+     */
+    private suspend fun loadSmartShuffle(filter: SearchFilter?, limit: Int): List<Asset> {
+        val halfLimit = limit / 2
         
-        if (!hasFilter) {
-            Log.i(TAG, "No search filter criteria - fetching random assets")
-            return getRandomAssets(limit)
+        // Get random assets from all time
+        val randomAssets = searchWithRandomApi(filter, halfLimit)
+        
+        // Get random assets from last 30 days
+        val recentFilter = addRecentFilter(filter)
+        val recentAssets = searchWithRandomApi(recentFilter, halfLimit)
+        
+        Log.i(TAG, "Smart shuffle: ${randomAssets.size} random + ${recentAssets.size} recent")
+        
+        // Interleave the two lists (alternating)
+        return interleave(randomAssets, recentAssets)
+    }
+    
+    /**
+     * Add takenAfter filter for recent photos (last 30 days)
+     */
+    private fun addRecentFilter(filter: SearchFilter?): SearchFilter {
+        val thirtyDaysAgo = Instant.now().minus(RECENT_DAYS.toLong(), ChronoUnit.DAYS).toString()
+        
+        return if (filter != null) {
+            // Copy existing filter but override takenAfter
+            filter.copy(takenAfter = thirtyDaysAgo)
+        } else {
+            SearchFilter(takenAfter = thirtyDaysAgo)
+        }
+    }
+    
+    /**
+     * Interleave two lists: A1, B1, A2, B2, A3, B3...
+     * If one list is shorter, remaining items from longer list are appended
+     */
+    private fun interleave(listA: List<Asset>, listB: List<Asset>): List<Asset> {
+        val result = mutableListOf<Asset>()
+        val maxLen = maxOf(listA.size, listB.size)
+        
+        for (i in 0 until maxLen) {
+            if (i < listA.size) result.add(listA[i])
+            if (i < listB.size) result.add(listB[i])
+        }
+        
+        // Deduplicate (same image could be in both lists)
+        return result.distinctBy { it.id }
+    }
+    
+    /**
+     * Search using /api/search/smart (fixed relevance order)
+     */
+    private suspend fun searchWithSmartApi(filter: SearchFilter?, limit: Int): List<Asset> {
+        if (!hasFilter(filter)) {
+            Log.i(TAG, "No filter for sequential mode - using random instead")
+            return searchWithRandomApi(null, limit)
         }
         
         return try {
@@ -113,44 +174,77 @@ class ImmichClient(private val config: ImmichConfig) {
                 isFavorite = filter.isFavorite
             )
             val response = api.smartSearch(request)
-            Log.d(TAG, "Search with filter returned ${response.assets.count} results")
+            Log.d(TAG, "Smart search returned ${response.assets.count} results (total: ${response.assets.total})")
             response.assets.items
         } catch (e: Exception) {
-            Log.e(TAG, "Search with filter failed: ${e.message}", e)
+            Log.e(TAG, "Smart search failed: ${e.message}", e)
             emptyList()
         }
     }
     
     /**
-     * Get random assets from Immich (no filter)
+     * Search using /api/search/random (random each time)
      */
-    suspend fun getRandomAssets(count: Int = 200): List<Asset> {
+    private suspend fun searchWithRandomApi(filter: SearchFilter?, count: Int): List<Asset> {
         return try {
-            val assets = api.getRandomAssets(count)
-            Log.d(TAG, "Got ${assets.size} random assets")
+            val request = RandomSearchRequest(
+                count = count,
+                type = filter?.type ?: "IMAGE",
+                personIds = filter?.personIds,
+                tagIds = filter?.tagIds,
+                albumId = filter?.albumId,
+                city = filter?.city,
+                country = filter?.country,
+                state = filter?.state,
+                takenAfter = filter?.takenAfter,
+                takenBefore = filter?.takenBefore,
+                isArchived = filter?.isArchived,
+                isFavorite = filter?.isFavorite
+            )
+            val assets = api.randomSearch(request)
+            Log.d(TAG, "Random search returned ${assets.size} results")
             assets
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get random assets: ${e.message}", e)
-            emptyList()
+            Log.e(TAG, "Random search failed: ${e.message}", e)
+            // Fallback to deprecated endpoint for older Immich versions
+            try {
+                Log.i(TAG, "Falling back to deprecated /api/assets/random")
+                @Suppress("DEPRECATION")
+                api.getRandomAssets(count)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Fallback also failed: ${e2.message}", e2)
+                emptyList()
+            }
         }
     }
     
     /**
-     * Search multiple queries and combine results (deduplicated)
-     * @deprecated Use searchWithFilter instead
+     * Check if filter has any criteria
      */
-    suspend fun searchMultiple(queries: List<String>, limitPerQuery: Int = 100): List<Asset> {
-        val allAssets = mutableMapOf<String, Asset>()
-        
-        for (query in queries) {
-            val results = smartSearch(query, limitPerQuery)
-            results.forEach { asset ->
-                allAssets[asset.id] = asset
-            }
-        }
-        
-        Log.d(TAG, "Combined search returned ${allAssets.size} unique assets")
-        return allAssets.values.toList()
+    private fun hasFilter(filter: SearchFilter?): Boolean {
+        return filter != null && (
+            filter.query != null ||
+            !filter.personIds.isNullOrEmpty() ||
+            !filter.tagIds.isNullOrEmpty() ||
+            filter.albumId != null ||
+            filter.city != null ||
+            filter.country != null ||
+            filter.state != null ||
+            filter.takenAfter != null ||
+            filter.takenBefore != null ||
+            filter.isArchived != null ||
+            filter.isFavorite != null
+        )
+    }
+    
+    // ========== Legacy methods for compatibility ==========
+    
+    /**
+     * @deprecated Use loadPlaylist with mode parameter instead
+     */
+    @Deprecated("Use loadPlaylist instead", ReplaceWith("loadPlaylist(filter, mode, limit)"))
+    suspend fun searchWithFilter(filter: SearchFilter?, limit: Int = 200): List<Asset> {
+        return loadPlaylist(filter, "smart_shuffle", limit)
     }
     
     /**

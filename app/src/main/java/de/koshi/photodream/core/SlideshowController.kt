@@ -496,19 +496,26 @@ class SlideshowController(
     private suspend fun loadPlaylist(profile: ProfileConfig) {
         withContext(Dispatchers.IO) {
             val client = immichClient ?: return@withContext
+            val displayMode = config?.display?.mode ?: "smart_shuffle"
             
-            val allAssets = client.searchWithFilter(profile.searchFilter, limit = 500)
+            // Load assets based on display mode
+            // - sequential: fixed order from smart search
+            // - random: random selection each time  
+            // - smart_shuffle: 50/50 mix of random + recent (last 30 days)
+            val allAssets = client.loadPlaylist(profile.searchFilter, displayMode, limit = 500)
             
+            // Apply exclude paths filter
             val filtered = allAssets.filter { asset ->
                 profile.excludePaths.none { pattern ->
                     asset.originalPath.contains(pattern.replace("*", ""))
                 }
             }
             
-            playlist = SmartShuffle.shuffle(filtered)
+            // For sequential mode, keep order as-is. For others, already randomized by API
+            playlist = filtered
             currentIndex = 0
             
-            Log.i(TAG, "Loaded playlist with ${playlist.size} images (filter: ${profile.searchFilter})")
+            Log.i(TAG, "Loaded playlist with ${playlist.size} images (mode: $displayMode, filter: ${profile.searchFilter})")
         }
     }
     

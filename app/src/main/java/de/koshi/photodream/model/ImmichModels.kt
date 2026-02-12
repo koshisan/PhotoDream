@@ -107,3 +107,44 @@ data class SmartSearchRequest(
     @SerializedName("isFavorite")
     val isFavorite: Boolean? = null
 )
+
+/**
+ * Random search request body - returns random assets matching filters
+ * Used for random and smart_shuffle display modes
+ */
+data class RandomSearchRequest(
+    val count: Int = 250,
+    val type: String = "IMAGE",
+    
+    @SerializedName("personIds")
+    val personIds: List<String>? = null,
+    
+    @SerializedName("tagIds")
+    val tagIds: List<String>? = null,
+    
+    @SerializedName("albumId")
+    val albumId: String? = null,
+    
+    @SerializedName("city")
+    val city: String? = null,
+    
+    @SerializedName("country")
+    val country: String? = null,
+    
+    @SerializedName("state")
+    val state: String? = null,
+    
+    @SerializedName("takenAfter")
+    val takenAfter: String? = null,
+    
+    @SerializedName("takenBefore")
+    val takenBefore: String? = null,
+    
+    @SerializedName("isArchived")
+    val isArchived: Boolean? = null,
+    
+    @SerializedName("isFavorite")
+    val isFavorite: Boolean? = null,
+    
+    // Note: query field for semantic search not supported in random endpoint
+)
