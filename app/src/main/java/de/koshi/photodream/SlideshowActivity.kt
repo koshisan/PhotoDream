@@ -307,7 +307,7 @@ class SlideshowActivity : AppCompatActivity() {
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
             // Reduce spacing between clock and date
-            (dateView.layoutParams as? android.widget.LinearLayout.LayoutParams)?.topMargin = -8
+            (dateView.layoutParams as? android.widget.LinearLayout.LayoutParams)?.topMargin = -4
         } else {
             dateView.visibility = View.GONE
         }
