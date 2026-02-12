@@ -25,7 +25,6 @@ import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
-import de.koshi.photodream.BuildConfig
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -513,7 +512,7 @@ class SlideshowActivity : AppCompatActivity() {
             ipAddress = DeviceInfo.getIpAddress(this),
             displayWidth = resolution.first,
             displayHeight = resolution.second,
-            appVersion = BuildConfig.VERSION_NAME
+            appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME
         )
     }
 }
