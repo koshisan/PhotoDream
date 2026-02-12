@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.gson.Gson
@@ -50,13 +51,11 @@ class SlideshowController(
     // UI components
     private lateinit var imageContainer: FrameLayout
     private lateinit var overlayContainer: FrameLayout
-    private lateinit var mainRow: LinearLayout
-    private lateinit var clockColumn: LinearLayout
-    private lateinit var clockView: TextView
-    private lateinit var dateView: TextView
-    private lateinit var weatherView: LinearLayout
-    private lateinit var weatherIcon: TextView
-    private lateinit var weatherTemp: TextView
+    private lateinit var gridLayout: GridLayout
+    private lateinit var clockView: TextView      // Top-left cell
+    private lateinit var dateView: TextView       // Bottom-left cell
+    private lateinit var weatherIcon: TextView    // Top-right cell
+    private lateinit var weatherTemp: TextView    // Bottom-right cell (or inline with icon)
     private lateinit var renderer: SlideshowRenderer
     
     // State
@@ -202,76 +201,80 @@ class SlideshowController(
             visibility = View.GONE
         }
         
-        // Main row: [Clock/Date Column] [Weather Column]
-        mainRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        // 2x2 Grid layout:
+        // [Clock]     [Weather Icon]
+        // [Date]      [Temperature]
+        // 
+        // Without date:
+        // [Clock]     [Icon + Temp]
+        gridLayout = GridLayout(context).apply {
+            columnCount = 2
+            rowCount = 2
         }
         
-        // Clock column (vertical: clock + date)
-        clockColumn = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        
+        // Top-left: Clock
         clockView = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 32f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            gravity = Gravity.CENTER
+            layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(0, 1f)
+                columnSpec = GridLayout.spec(0, 1f)
+                setGravity(Gravity.CENTER)
+            }
         }
         
+        // Bottom-left: Date
         dateView = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 18f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
+            gravity = Gravity.CENTER
             visibility = View.GONE
-        }
-        
-        clockColumn.addView(clockView)
-        clockColumn.addView(dateView)
-        
-        // Weather view (horizontal: icon + temp, vertically centered to clock column)
-        weatherView = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = 24  // Gap between clock and weather
+            layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(1, 1f)
+                columnSpec = GridLayout.spec(0, 1f)
+                setGravity(Gravity.CENTER)
             }
         }
         
+        // Top-right: Weather Icon (will hold icon + temp when no date)
         weatherIcon = TextView(context).apply {
             setTextColor(Color.WHITE)
-            textSize = 48f  // Large icon
+            textSize = 48f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(0, 1f)
+                columnSpec = GridLayout.spec(1, 1f)
+                setGravity(Gravity.CENTER)
+                marginStart = 32
+            }
         }
         
+        // Bottom-right: Temperature (only visible when date is visible)
         weatherTemp = TextView(context).apply {
             setTextColor(Color.WHITE)
-            textSize = 16f
+            textSize = 18f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = 4
-                bottomMargin = 8  // Align with top of icon
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(1, 1f)
+                columnSpec = GridLayout.spec(1, 1f)
+                setGravity(Gravity.CENTER)
+                marginStart = 32
             }
-            gravity = Gravity.TOP
         }
         
-        weatherView.addView(weatherIcon)
-        weatherView.addView(weatherTemp)
+        gridLayout.addView(clockView)
+        gridLayout.addView(weatherIcon)
+        gridLayout.addView(dateView)
+        gridLayout.addView(weatherTemp)
         
-        mainRow.addView(clockColumn)
-        mainRow.addView(weatherView)
-        overlayContainer.addView(mainRow)
+        overlayContainer.addView(gridLayout)
         
         container.addView(imageContainer)
         container.addView(overlayContainer)
@@ -349,20 +352,17 @@ class SlideshowController(
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
         
+        // Configure grid rows based on whether date is shown
         if (display.date) {
             dateView.visibility = View.VISIBLE
-            dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
-            dateView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = -35  // Negative margin to pull date closer to clock
-            }
+            dateView.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
+            gridLayout.rowCount = 2
         } else {
             dateView.visibility = View.GONE
+            gridLayout.rowCount = 1
         }
         
-        // Setup weather if enabled
+        // Setup weather if enabled (needs to know about date visibility)
         setupWeather(display)
         
         // Position the overlay container
@@ -391,43 +391,37 @@ class SlideshowController(
     private fun setupWeather(display: DisplayConfig) {
         val weather = display.weather
         
-        // Hide weather if:
-        // - No weather config
-        // - Not enabled
-        // - No actual weather data (condition is null)
+        // Hide weather if not configured or no data
         if (weather == null || !weather.enabled || weather.condition == null) {
             Log.d(TAG, "Weather hidden: config=${weather != null}, enabled=${weather?.enabled}, condition=${weather?.condition}")
-            weatherView.visibility = View.GONE
+            weatherIcon.visibility = View.GONE
+            weatherTemp.visibility = View.GONE
             return
         }
         
         Log.d(TAG, "Weather shown: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
-        weatherView.visibility = View.VISIBLE
         
-        // Scale weather icon relative to clock font size
-        weatherIcon.textSize = display.clockFontSize * 1.5f
-        weatherTemp.textSize = display.clockFontSize * 0.5f
-        
-        // Update weather display
-        updateWeatherDisplay(weather)
-    }
-    
-    private fun updateWeatherDisplay(weather: WeatherConfig) {
-        // Map condition to emoji icon
         val icon = getWeatherIcon(weather.condition)
-        weatherIcon.text = icon
-        
-        // Format temperature
         val temp = weather.temperature
-        if (temp != null) {
-            val tempInt = temp.toInt()
-            val unit = weather.temperatureUnit
-            weatherTemp.text = "$tempInt$unit"
-        } else {
-            weatherTemp.text = ""
-        }
+        val tempText = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         
-        Log.d(TAG, "Weather updated: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
+        if (display.date) {
+            // 2x2 grid mode: icon in top-right, temp in bottom-right
+            weatherIcon.text = icon
+            weatherIcon.textSize = display.clockFontSize * 0.9f
+            weatherIcon.visibility = View.VISIBLE
+            
+            weatherTemp.text = tempText
+            weatherTemp.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
+            weatherTemp.visibility = View.VISIBLE
+        } else {
+            // 1-row mode: icon + temp together in top-right cell
+            weatherIcon.text = "$icon $tempText"
+            weatherIcon.textSize = display.clockFontSize * 0.7f
+            weatherIcon.visibility = View.VISIBLE
+            
+            weatherTemp.visibility = View.GONE
+        }
     }
     
     /**
