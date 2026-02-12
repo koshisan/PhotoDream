@@ -203,7 +203,7 @@ class SlideshowController(
             textSize = 32f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
@@ -298,7 +298,7 @@ class SlideshowController(
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
             dateView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = -35  // Negative margin to pull date closer to clock
@@ -307,12 +307,14 @@ class SlideshowController(
             dateView.visibility = View.GONE
         }
         
-        // Align children within the LinearLayout based on clock position
-        clockContainer.gravity = when (display.clockPosition) {
-            0, 3 -> Gravity.START          // Left positions
-            1, 4, 6 -> Gravity.CENTER_HORIZONTAL  // Center positions
-            else -> Gravity.END            // Right positions
+        // Text alignment within each view (works because width is MATCH_PARENT)
+        val textAlignment = when (display.clockPosition) {
+            0, 3 -> View.TEXT_ALIGNMENT_VIEW_START   // Left positions
+            1, 4, 6 -> View.TEXT_ALIGNMENT_CENTER    // Center positions
+            else -> View.TEXT_ALIGNMENT_VIEW_END     // Right positions
         }
+        clockView.textAlignment = textAlignment
+        dateView.textAlignment = textAlignment
         
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
