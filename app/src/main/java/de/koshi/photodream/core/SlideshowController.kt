@@ -14,9 +14,12 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.google.gson.Gson
+import de.koshi.photodream.R
 import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import de.koshi.photodream.server.HttpServerService
@@ -55,7 +58,7 @@ class SlideshowController(
     private lateinit var rightColumn: LinearLayout    // Vertical: weather icon, temp
     private lateinit var clockView: TextView
     private lateinit var dateView: TextView
-    private lateinit var weatherIcon: TextView
+    private lateinit var weatherIcon: ImageView
     private lateinit var weatherTemp: TextView
     private lateinit var renderer: SlideshowRenderer
     
@@ -259,11 +262,9 @@ class SlideshowController(
             }
         }
         
-        weatherIcon = TextView(context).apply {
-            setTextColor(Color.WHITE)
-            textSize = 48f
-            setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            gravity = Gravity.CENTER
+        weatherIcon = ImageView(context).apply {
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
         
         weatherTemp = TextView(context).apply {
@@ -409,14 +410,19 @@ class SlideshowController(
         Log.d(TAG, "Weather shown: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
         rightColumn.visibility = View.VISIBLE
         
-        val icon = getWeatherIcon(weather.condition)
+        val iconRes = getWeatherIconResource(weather.condition)
         val temp = weather.temperature
         val tempText = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         
+        // Set the icon drawable
+        weatherIcon.setImageResource(iconRes)
+        
         if (display.date) {
             // 2-row mode: icon on top, temp on bottom (aligned with date)
-            weatherIcon.text = icon
-            weatherIcon.textSize = display.clockFontSize * 0.9f
+            val iconSize = (display.clockFontSize * 1.2f).toInt()
+            weatherIcon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
             
             weatherTemp.text = tempText
             weatherTemp.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
@@ -429,14 +435,15 @@ class SlideshowController(
             rightColumn.addView(weatherTemp)
         } else {
             // 1-row mode: temp small on top-left, icon below
-            // Stack: temp (small, left-aligned) then icon (centered)
+            val iconSize = (display.clockFontSize * 0.9f).toInt()
+            weatherIcon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            
             weatherTemp.text = tempText
             weatherTemp.textSize = (display.clockFontSize * 0.25f).coerceAtLeast(10f)
             weatherTemp.visibility = View.VISIBLE
             weatherTemp.gravity = Gravity.START  // Left-aligned
-            
-            weatherIcon.text = icon
-            weatherIcon.textSize = display.clockFontSize * 0.7f
             
             // Reorder: temp first (top), icon second (bottom)
             rightColumn.removeAllViews()
@@ -446,21 +453,21 @@ class SlideshowController(
     }
     
     /**
-     * Map weather condition string to emoji icon
+     * Map weather condition string to drawable resource
      */
-    private fun getWeatherIcon(condition: String?): String {
+    private fun getWeatherIconResource(condition: String?): Int {
         return when (condition?.lowercase()) {
-            "sunny", "clear", "clear-night" -> "☀️"
-            "partlycloudy", "partly-cloudy", "partly_cloudy" -> "⛅"
-            "cloudy" -> "☁️"
-            "rainy", "rain", "pouring" -> "🌧️"
-            "snowy", "snow", "snowy-rainy" -> "❄️"
-            "windy", "wind" -> "💨"
-            "fog", "foggy", "hazy" -> "🌫️"
-            "lightning", "lightning-rainy", "thunderstorm" -> "⛈️"
-            "hail" -> "🌨️"
-            "exceptional" -> "⚠️"
-            else -> "🌤️"  // Default to partly sunny
+            "sunny", "clear", "clear-night" -> R.drawable.ic_weather_sunny
+            "partlycloudy", "partly-cloudy", "partly_cloudy" -> R.drawable.ic_weather_partlycloudy
+            "cloudy" -> R.drawable.ic_weather_cloudy
+            "rainy", "rain", "pouring" -> R.drawable.ic_weather_rainy
+            "snowy", "snow", "snowy-rainy" -> R.drawable.ic_weather_snowy
+            "windy", "wind" -> R.drawable.ic_weather_windy
+            "fog", "foggy", "hazy" -> R.drawable.ic_weather_foggy
+            "lightning", "lightning-rainy", "thunderstorm" -> R.drawable.ic_weather_thunderstorm
+            "hail" -> R.drawable.ic_weather_snowy
+            "exceptional" -> R.drawable.ic_weather_default
+            else -> R.drawable.ic_weather_default
         }
     }
     
