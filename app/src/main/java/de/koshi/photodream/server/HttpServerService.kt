@@ -89,6 +89,27 @@ class HttpServerService : Service() {
     var onNextImage: (() -> Unit)? = null
     var onSetProfile: ((String) -> Unit)? = null
     var getStatus: (() -> DeviceStatus)? = null
+    var getPlaylistInfo: (() -> PlaylistInfo?)? = null
+    
+    /**
+     * Playlist information for /health endpoint
+     */
+    data class PlaylistInfo(
+        val currentIndex: Int,
+        val totalImages: Int,
+        val displayMode: String,
+        val searchFilter: Map<String, Any?>?,
+        val previousImage: ImageInfo?,
+        val currentImage: ImageInfo?,
+        val nextImage: ImageInfo?
+    )
+    
+    data class ImageInfo(
+        val id: String,
+        val thumbnailUrl: String?,
+        val originalPath: String?,
+        val createdAt: String?
+    )
     
     fun updateStatus(status: DeviceStatus) {
         currentStatus = status
@@ -303,6 +324,9 @@ class HttpServerService : Service() {
                 try { gson.fromJson(it, Map::class.java) } catch (e: Exception) { null }
             }
             
+            // Get playlist info from controller
+            val playlistInfo = getPlaylistInfo?.invoke()
+            
             return jsonResponse(mapOf(
                 "status" to "ok",
                 "service" to "PhotoDream",
@@ -314,6 +338,31 @@ class HttpServerService : Service() {
                 "webhook_last_error" to lastWebhookError,
                 "config_loaded" to (currentConfig != null),
                 "device_id" to currentConfig?.deviceId,
+                "playlist" to playlistInfo?.let { mapOf(
+                    "current_index" to it.currentIndex,
+                    "total_images" to it.totalImages,
+                    "position" to "${it.currentIndex + 1}/${it.totalImages}",
+                    "display_mode" to it.displayMode,
+                    "search_filter" to it.searchFilter,
+                    "previous_image" to it.previousImage?.let { img -> mapOf(
+                        "id" to img.id,
+                        "thumbnail_url" to img.thumbnailUrl,
+                        "original_path" to img.originalPath,
+                        "created_at" to img.createdAt
+                    )},
+                    "current_image" to it.currentImage?.let { img -> mapOf(
+                        "id" to img.id,
+                        "thumbnail_url" to img.thumbnailUrl,
+                        "original_path" to img.originalPath,
+                        "created_at" to img.createdAt
+                    )},
+                    "next_image" to it.nextImage?.let { img -> mapOf(
+                        "id" to img.id,
+                        "thumbnail_url" to img.thumbnailUrl,
+                        "original_path" to img.originalPath,
+                        "created_at" to img.createdAt
+                    )}
+                )},
                 "last_received_config" to configObject
             ))
         }

@@ -147,6 +147,7 @@ class SlideshowController(
                 onNextImage = { showNextImage() }
                 onSetProfile = { profile -> setProfile(profile) }
                 getStatus = { getCurrentStatus() }
+                getPlaylistInfo = { getPlaylistInfoInternal() }
                 updateStatus(getCurrentStatus())
             }
             serviceBound = true
@@ -322,6 +323,7 @@ class SlideshowController(
                 onNextImage = null
                 onSetProfile = null
                 getStatus = null
+                getPlaylistInfo = null
                 updateStatus(DeviceStatus(online = true, active = false))
             }
             context.unbindService(serviceConnection)
@@ -723,6 +725,56 @@ class SlideshowController(
             displayHeight = resolution.second,
             appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME,
             lastReceivedConfig = lastReceivedConfigJson
+        )
+    }
+    
+    private fun getPlaylistInfoInternal(): HttpServerService.PlaylistInfo? {
+        if (playlist.isEmpty()) return null
+        
+        val baseUrl = config?.immich?.baseUrl ?: ""
+        val displayMode = config?.display?.mode ?: "smart_shuffle"
+        val searchFilter = config?.profile?.searchFilter
+        
+        fun assetToImageInfo(asset: Asset?): HttpServerService.ImageInfo? {
+            return asset?.let {
+                HttpServerService.ImageInfo(
+                    id = it.id,
+                    thumbnailUrl = it.getThumbnailUrl(baseUrl),
+                    originalPath = it.originalPath,
+                    createdAt = it.fileCreatedAt
+                )
+            }
+        }
+        
+        val prevAsset = if (currentIndex > 0) playlist.getOrNull(currentIndex - 1) else null
+        val currAsset = playlist.getOrNull(currentIndex)
+        val nextAsset = playlist.getOrNull(currentIndex + 1)
+        
+        // Convert SearchFilter to Map for JSON serialization
+        val filterMap = searchFilter?.let { filter ->
+            mutableMapOf<String, Any?>().apply {
+                filter.query?.let { put("query", it) }
+                filter.personIds?.let { if (it.isNotEmpty()) put("personIds", it) }
+                filter.tagIds?.let { if (it.isNotEmpty()) put("tagIds", it) }
+                filter.albumId?.let { put("albumId", it) }
+                filter.city?.let { put("city", it) }
+                filter.country?.let { put("country", it) }
+                filter.state?.let { put("state", it) }
+                filter.takenAfter?.let { put("takenAfter", it) }
+                filter.takenBefore?.let { put("takenBefore", it) }
+                filter.isArchived?.let { put("isArchived", it) }
+                filter.isFavorite?.let { put("isFavorite", it) }
+            }.ifEmpty { null }
+        }
+        
+        return HttpServerService.PlaylistInfo(
+            currentIndex = currentIndex,
+            totalImages = playlist.size,
+            displayMode = displayMode,
+            searchFilter = filterMap,
+            previousImage = assetToImageInfo(prevAsset),
+            currentImage = assetToImageInfo(currAsset),
+            nextImage = assetToImageInfo(nextAsset)
         )
     }
 }
