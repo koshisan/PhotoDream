@@ -301,19 +301,18 @@ class SlideshowController(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = -8  // Negative margin to pull date closer to clock
+                topMargin = -35  // Negative margin to pull date closer to clock
             }
         } else {
             dateView.visibility = View.GONE
         }
         
-        val textAlignment = when (display.clockPosition) {
-            0, 3 -> View.TEXT_ALIGNMENT_VIEW_START
-            1, 4, 6 -> View.TEXT_ALIGNMENT_CENTER
-            else -> View.TEXT_ALIGNMENT_VIEW_END
+        // Align children within the LinearLayout based on clock position
+        clockContainer.gravity = when (display.clockPosition) {
+            0, 3 -> Gravity.START          // Left positions
+            1, 4, 6 -> Gravity.CENTER_HORIZONTAL  // Center positions
+            else -> Gravity.END            // Right positions
         }
-        clockView.textAlignment = textAlignment
-        dateView.textAlignment = textAlignment
         
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
