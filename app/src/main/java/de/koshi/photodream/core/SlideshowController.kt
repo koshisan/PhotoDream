@@ -380,7 +380,11 @@ class SlideshowController(
     
     private fun startSlideshow() {
         if (playlist.isEmpty()) {
-            showError("No images found for current profile")
+            Log.w(TAG, "No images found - showing placeholder message")
+            showError("No images found for current profile.\nPlease check your Immich filter settings.")
+            // Don't crash - just don't start the slideshow timer
+            // The user can tap to exit or wait for new config
+            reportStatusToHA()
             return
         }
         
@@ -482,14 +486,42 @@ class SlideshowController(
     
     private fun showError(message: String) {
         Log.e(TAG, message)
-        clockView.apply {
-            text = message
-            visibility = View.VISIBLE
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
+        
+        // Hide clock container if showing error
+        if (::clockContainer.isInitialized) {
+            clockContainer.visibility = View.GONE
+        }
+        
+        // Create error text view if clock isn't initialized yet
+        if (!::clockView.isInitialized) {
+            val errorView = TextView(context).apply {
+                text = message
+                setTextColor(Color.WHITE)
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setShadowLayer(4f, 2f, 2f, Color.BLACK)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            }
+            container.addView(errorView)
+        } else {
+            clockView.apply {
+                text = message
+                textSize = 20f
+                gravity = Gravity.CENTER
+                visibility = View.VISIBLE
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            }
+            // Add it directly to container instead of clockContainer
+            clockContainer.removeView(clockView)
+            container.addView(clockView)
         }
     }
     

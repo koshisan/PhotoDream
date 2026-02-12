@@ -73,16 +73,32 @@ class ImmichClient(private val config: ImmichConfig) {
     
     /**
      * Search using a SearchFilter object (from Immich URL)
+     * If filter is empty/null, fetches random assets instead.
      */
     suspend fun searchWithFilter(filter: SearchFilter?, limit: Int = 200): List<Asset> {
-        if (filter == null) {
-            Log.w(TAG, "No search filter provided")
-            return emptyList()
+        // Check if filter has any actual criteria
+        val hasFilter = filter != null && (
+            filter.query != null ||
+            !filter.personIds.isNullOrEmpty() ||
+            !filter.tagIds.isNullOrEmpty() ||
+            filter.albumId != null ||
+            filter.city != null ||
+            filter.country != null ||
+            filter.state != null ||
+            filter.takenAfter != null ||
+            filter.takenBefore != null ||
+            filter.isArchived != null ||
+            filter.isFavorite != null
+        )
+        
+        if (!hasFilter) {
+            Log.i(TAG, "No search filter criteria - fetching random assets")
+            return getRandomAssets(limit)
         }
         
         return try {
             val request = SmartSearchRequest(
-                query = filter.query,
+                query = filter!!.query,
                 size = limit,
                 type = filter.type ?: "IMAGE",
                 personIds = filter.personIds,
@@ -101,6 +117,20 @@ class ImmichClient(private val config: ImmichConfig) {
             response.assets.items
         } catch (e: Exception) {
             Log.e(TAG, "Search with filter failed: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Get random assets from Immich (no filter)
+     */
+    suspend fun getRandomAssets(count: Int = 200): List<Asset> {
+        return try {
+            val assets = api.getRandomAssets(count)
+            Log.d(TAG, "Got ${assets.size} random assets")
+            assets
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get random assets: ${e.message}", e)
             emptyList()
         }
     }
