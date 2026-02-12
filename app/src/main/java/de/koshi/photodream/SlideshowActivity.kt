@@ -412,11 +412,12 @@ class SlideshowActivity : AppCompatActivity() {
         Log.i(TAG, "Applying config live: clock=${newConfig.display.clock}, interval=${newConfig.display.intervalSeconds}")
         
         val oldProfile = config?.profile?.name
+        val oldPanSpeed = config?.display?.panSpeed
         config = newConfig
         
         // Apply display settings immediately
         setupClock(newConfig.display)
-        applyPanSpeed(newConfig.display.panSpeed, reload = true)
+        applyPanSpeed(newConfig.display.panSpeed, reload = oldPanSpeed != newConfig.display.panSpeed)
         
         // Reset slideshow timer with new interval
         resetSlideshowTimer()
