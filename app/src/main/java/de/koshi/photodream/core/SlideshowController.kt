@@ -661,6 +661,11 @@ class SlideshowController(
             scope.launch {
                 immichClient = ImmichClient(newConfig.immich)
                 loadPlaylist(newConfig.profile)
+                // Show new image immediately after loading playlist
+                if (playlist.isNotEmpty()) {
+                    currentIndex = 0
+                    showCurrentImage(withTransition = true)
+                }
             }
         }
         
@@ -674,6 +679,11 @@ class SlideshowController(
             config?.let { cfg ->
                 immichClient = ImmichClient(cfg.immich)
                 loadPlaylist(cfg.profile)
+                // Show new image immediately
+                if (playlist.isNotEmpty()) {
+                    currentIndex = 0
+                    showCurrentImage(withTransition = true)
+                }
             }
         }
     }
