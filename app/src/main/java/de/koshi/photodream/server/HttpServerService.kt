@@ -119,6 +119,13 @@ class HttpServerService : Service() {
         // Start HTTP server
         startServer(serverPort)
         
+        // Load cached config if available
+        val cachedConfig = ConfigManager.loadCachedConfig(this)
+        if (cachedConfig != null) {
+            currentConfig = cachedConfig
+            Log.i(TAG, "Loaded cached config for device: ${cachedConfig.deviceId}")
+        }
+        
         // Return sticky so system restarts service if killed
         return START_STICKY
     }
@@ -235,10 +242,13 @@ class HttpServerService : Service() {
             return try {
                 val config = gson.fromJson(postData, DeviceConfig::class.java)
                 
-                // Save config
+                // Save config to disk
                 ConfigManager.saveConfigFromHA(this@HttpServerService, config)
                 
-                // Notify DreamService on main thread
+                // Update runtime config (for /health endpoint)
+                currentConfig = config
+                
+                // Notify active slideshow on main thread (if running)
                 mainHandler.post { onConfigReceived?.invoke(config) }
                 
                 jsonResponse(mapOf("success" to true, "message" to "Config received"))
