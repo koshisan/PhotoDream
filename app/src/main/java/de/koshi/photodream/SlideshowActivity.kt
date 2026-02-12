@@ -305,7 +305,9 @@ class SlideshowActivity : AppCompatActivity() {
         // Setup date if enabled
         if (display.date) {
             dateView.visibility = View.VISIBLE
-            dateView.textSize = (display.clockFontSize * 0.5f).coerceAtLeast(12f)
+            dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
+            // Reduce spacing between clock and date
+            (dateView.layoutParams as? android.widget.LinearLayout.LayoutParams)?.topMargin = -8
         } else {
             dateView.visibility = View.GONE
         }
