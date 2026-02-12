@@ -72,6 +72,12 @@ class HttpServerService : Service() {
     // Config for image proxy (to get API key for Immich)
     private var currentConfig: DeviceConfig? = null
     
+    // Webhook status tracking for debugging
+    var lastWebhookAttempt: Long = 0
+    var lastWebhookSuccess: Boolean? = null
+    var lastWebhookError: String? = null
+    var webhookAttemptCount: Int = 0
+    
     fun updateConfig(config: DeviceConfig) {
         currentConfig = config
     }
@@ -280,7 +286,18 @@ class HttpServerService : Service() {
         }
         
         private fun handleHealth(): Response {
-            return jsonResponse(mapOf("status" to "ok", "service" to "PhotoDream"))
+            return jsonResponse(mapOf(
+                "status" to "ok",
+                "service" to "PhotoDream",
+                "app_version" to de.koshi.photodream.BuildConfig.VERSION_NAME,
+                "webhook_url" to (currentConfig?.webhookUrl ?: "NOT SET"),
+                "webhook_attempts" to webhookAttemptCount,
+                "webhook_last_attempt" to if (lastWebhookAttempt > 0) lastWebhookAttempt else null,
+                "webhook_last_success" to lastWebhookSuccess,
+                "webhook_last_error" to lastWebhookError,
+                "config_loaded" to (currentConfig != null),
+                "device_id" to currentConfig?.deviceId
+            ))
         }
         
         private fun handleCurrentImage(): Response {

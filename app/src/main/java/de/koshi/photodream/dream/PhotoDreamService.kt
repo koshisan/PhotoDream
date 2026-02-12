@@ -465,6 +465,9 @@ class PhotoDreamService : DreamService() {
         }
         
         scope.launch(Dispatchers.IO) {
+            httpService?.webhookAttemptCount = (httpService?.webhookAttemptCount ?: 0) + 1
+            httpService?.lastWebhookAttempt = System.currentTimeMillis()
+            
             try {
                 val status = getCurrentStatus()
                 val statusWithDeviceId = mapOf(
@@ -478,7 +481,8 @@ class PhotoDreamService : DreamService() {
                     "mac_address" to status.macAddress,
                     "ip_address" to status.ipAddress,
                     "display_width" to status.displayWidth,
-                    "display_height" to status.displayHeight
+                    "display_height" to status.displayHeight,
+                    "app_version" to status.appVersion
                 )
                 
                 val json = gson.toJson(statusWithDeviceId)
@@ -490,11 +494,17 @@ class PhotoDreamService : DreamService() {
                 val response = httpClient.newCall(request).execute()
                 if (response.isSuccessful) {
                     Log.d(TAG, "Status reported to HA successfully")
+                    httpService?.lastWebhookSuccess = true
+                    httpService?.lastWebhookError = null
                 } else {
                     Log.w(TAG, "Failed to report status to HA: ${response.code}")
+                    httpService?.lastWebhookSuccess = false
+                    httpService?.lastWebhookError = "HTTP ${response.code}: ${response.message}"
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error reporting status to HA: ${e.message}", e)
+                httpService?.lastWebhookSuccess = false
+                httpService?.lastWebhookError = "${e.javaClass.simpleName}: ${e.message}"
             }
         }
     }
