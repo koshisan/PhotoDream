@@ -280,6 +280,8 @@ class SlideshowRenderer(
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = panDuration
             interpolator = LinearInterpolator()
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
             
             addUpdateListener { animation ->
                 val fraction = animation.animatedFraction
