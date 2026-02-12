@@ -236,6 +236,11 @@ class SlideshowController(
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
             gravity = Gravity.CENTER
             visibility = View.GONE
+            // MATCH_PARENT width = same width as clock (column width)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
         
         leftColumn.addView(clockView)
@@ -267,6 +272,11 @@ class SlideshowController(
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
             gravity = Gravity.CENTER
             visibility = View.GONE
+            // MATCH_PARENT width = same width as weather icon (column width)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
         
         rightColumn.addView(weatherIcon)
