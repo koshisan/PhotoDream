@@ -268,6 +268,9 @@ class PhotoDreamService : DreamService() {
                     // Setup clock
                     setupClock(cfg.display)
                     
+                    // Apply pan speed from config
+                    applyPanSpeed(cfg.display.panSpeed)
+                    
                     // Load playlist
                     loadPlaylist(cfg.profile)
                     
@@ -310,6 +313,17 @@ class PhotoDreamService : DreamService() {
         
         // Start clock updates
         handler.post(clockRunnable)
+    }
+    
+    /**
+     * Apply pan speed from config.
+     * panSpeed: 0.0-2.0, where 1.0 = 10 seconds per pan cycle
+     * Higher = faster panning
+     */
+    private fun applyPanSpeed(panSpeed: Float) {
+        val effectiveSpeed = panSpeed.coerceIn(0.1f, 2.0f) // Avoid division by zero
+        renderer.panDuration = (10000L / effectiveSpeed).toLong()
+        Log.d(TAG, "Pan speed set to $panSpeed -> duration ${renderer.panDuration}ms")
     }
     
     private fun updateClock() {
@@ -466,6 +480,7 @@ class PhotoDreamService : DreamService() {
         
         // Apply display settings immediately
         setupClock(newConfig.display)
+        applyPanSpeed(newConfig.display.panSpeed)
         
         // Reset slideshow timer with new interval
         resetSlideshowTimer()

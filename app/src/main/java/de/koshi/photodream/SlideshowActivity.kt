@@ -263,6 +263,7 @@ class SlideshowActivity : AppCompatActivity() {
                     
                     immichClient = ImmichClient(cfg.immich)
                     setupClock(cfg.display)
+                    applyPanSpeed(cfg.display.panSpeed)
                     loadPlaylist(cfg.profile)
                     startSlideshow()
                 }
@@ -300,6 +301,17 @@ class SlideshowActivity : AppCompatActivity() {
         clockView.layoutParams = layoutParams
         
         handler.post(clockRunnable)
+    }
+    
+    /**
+     * Apply pan speed from config.
+     * panSpeed: 0.0-2.0, where 1.0 = 10 seconds per pan cycle
+     * Higher = faster panning
+     */
+    private fun applyPanSpeed(panSpeed: Float) {
+        val effectiveSpeed = panSpeed.coerceIn(0.1f, 2.0f)
+        renderer.panDuration = (10000L / effectiveSpeed).toLong()
+        Log.d(TAG, "Pan speed set to $panSpeed -> duration ${renderer.panDuration}ms")
     }
     
     private fun updateClock() {
@@ -399,6 +411,7 @@ class SlideshowActivity : AppCompatActivity() {
         
         // Apply display settings immediately
         setupClock(newConfig.display)
+        applyPanSpeed(newConfig.display.panSpeed)
         
         // Reset slideshow timer with new interval
         resetSlideshowTimer()
