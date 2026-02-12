@@ -83,11 +83,78 @@ class ImmichClient(private val config: ImmichConfig) {
     }
     
     /**
-     * Sequential mode: Fixed "relevance" order from smart search
-     * Always returns the same images in the same order
+     * Sequential mode: Chronological order (oldest to newest)
+     * Fetches ALL matching images via pagination, then sorts by date.
+     * 
+     * Note: Can be slow for large result sets. Set appropriate filters
+     * to keep the number of matching images reasonable.
      */
     private suspend fun loadSequential(filter: SearchFilter?, limit: Int): List<Asset> {
-        return searchWithSmartApi(filter, limit)
+        val allAssets = fetchAllWithPagination(filter)
+        
+        // Sort chronologically (oldest first)
+        val sorted = allAssets.sortedBy { asset ->
+            asset.fileCreatedAt ?: asset.localDateTime ?: ""
+        }
+        
+        Log.i(TAG, "Sequential: fetched ${allAssets.size} total, sorted chronologically")
+        return sorted
+    }
+    
+    /**
+     * Fetch ALL matching assets using pagination
+     */
+    private suspend fun fetchAllWithPagination(filter: SearchFilter?, pageSize: Int = 500): List<Asset> {
+        if (!hasFilter(filter)) {
+            Log.i(TAG, "No filter for sequential - fetching via timeline would be better, using random fallback")
+            return searchWithRandomApi(null, 500)
+        }
+        
+        val allAssets = mutableListOf<Asset>()
+        var page = 1
+        var hasMore = true
+        
+        while (hasMore) {
+            val request = SmartSearchRequest(
+                query = filter!!.query,
+                page = page,
+                size = pageSize,
+                type = filter.type ?: "IMAGE",
+                personIds = filter.personIds,
+                tagIds = filter.tagIds,
+                albumId = filter.albumId,
+                city = filter.city,
+                country = filter.country,
+                state = filter.state,
+                takenAfter = filter.takenAfter,
+                takenBefore = filter.takenBefore,
+                isArchived = filter.isArchived,
+                isFavorite = filter.isFavorite
+            )
+            
+            try {
+                val response = api.smartSearch(request)
+                val items = response.assets.items
+                allAssets.addAll(items)
+                
+                Log.d(TAG, "Pagination: page $page, got ${items.size}, total so far: ${allAssets.size}/${response.assets.total}")
+                
+                // Check if there are more pages
+                hasMore = allAssets.size < response.assets.total && items.isNotEmpty()
+                page++
+                
+                // Safety limit to prevent infinite loops
+                if (page > 100) {
+                    Log.w(TAG, "Pagination safety limit reached (100 pages)")
+                    break
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Pagination failed at page $page: ${e.message}", e)
+                break
+            }
+        }
+        
+        return allAssets.distinctBy { it.id }  // Deduplicate just in case
     }
     
     /**
