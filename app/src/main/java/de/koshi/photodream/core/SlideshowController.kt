@@ -390,11 +390,18 @@ class SlideshowController(
     
     private fun setupWeather(display: DisplayConfig) {
         val weather = display.weather
-        if (weather == null || !weather.enabled) {
+        
+        // Hide weather if:
+        // - No weather config
+        // - Not enabled
+        // - No actual weather data (condition is null)
+        if (weather == null || !weather.enabled || weather.condition == null) {
+            Log.d(TAG, "Weather hidden: config=${weather != null}, enabled=${weather?.enabled}, condition=${weather?.condition}")
             weatherView.visibility = View.GONE
             return
         }
         
+        Log.d(TAG, "Weather shown: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
         weatherView.visibility = View.VISIBLE
         
         // Scale weather icon relative to clock font size
