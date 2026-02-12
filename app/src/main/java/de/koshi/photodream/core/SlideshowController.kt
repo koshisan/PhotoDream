@@ -650,6 +650,9 @@ class SlideshowController(
         val oldProfileId = config?.profile?.id
         val newProfileId = newConfig.profile.id
         val oldPanSpeed = config?.display?.panSpeed
+        
+        Log.i(TAG, "Profile check: old='$oldProfileId' new='$newProfileId' changed=${oldProfileId != newProfileId}")
+        
         config = newConfig
         
         setupClock(newConfig.display)
