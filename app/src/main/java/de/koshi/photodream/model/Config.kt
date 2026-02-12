@@ -42,7 +42,7 @@ data class DisplayConfig(
     @SerializedName("date_format")
     val dateFormat: String = "dd.MM.yyyy", // Date format string
     
-    val weather: Boolean = false,
+    val weather: WeatherConfig? = null, // Weather display settings
     
     @SerializedName("interval_seconds")
     val intervalSeconds: Int = 30,
@@ -51,6 +51,23 @@ data class DisplayConfig(
     val panSpeed: Float = 0.5f, // Ken Burns effect speed
     
     val mode: String = "smart_shuffle" // display mode
+)
+
+/**
+ * Weather display configuration
+ */
+data class WeatherConfig(
+    val enabled: Boolean = false,
+    
+    @SerializedName("entity_id")
+    val entityId: String? = null, // e.g. "weather.home"
+    
+    val condition: String? = null, // Current condition: sunny, cloudy, rainy, etc.
+    
+    val temperature: Float? = null, // Current temperature
+    
+    @SerializedName("temperature_unit")
+    val temperatureUnit: String = "°C" // °C or °F
 )
 
 data class ProfileConfig(

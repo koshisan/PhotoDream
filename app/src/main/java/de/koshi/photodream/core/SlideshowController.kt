@@ -49,9 +49,14 @@ class SlideshowController(
     
     // UI components
     private lateinit var imageContainer: FrameLayout
-    private lateinit var clockContainer: LinearLayout
+    private lateinit var overlayContainer: FrameLayout
+    private lateinit var mainRow: LinearLayout
+    private lateinit var clockColumn: LinearLayout
     private lateinit var clockView: TextView
     private lateinit var dateView: TextView
+    private lateinit var weatherView: LinearLayout
+    private lateinit var weatherIcon: TextView
+    private lateinit var weatherTemp: TextView
     private lateinit var renderer: SlideshowRenderer
     
     // State
@@ -192,10 +197,20 @@ class SlideshowController(
             )
         }
         
-        // Clock container
-        clockContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+        // Overlay container (positioned via gravity)
+        overlayContainer = FrameLayout(context).apply {
             visibility = View.GONE
+        }
+        
+        // Main row: [Clock/Date Column] [Weather Column]
+        mainRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        
+        // Clock column (vertical: clock + date)
+        clockColumn = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
         }
         
         clockView = TextView(context).apply {
@@ -203,7 +218,7 @@ class SlideshowController(
             textSize = 32f
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
@@ -215,11 +230,51 @@ class SlideshowController(
             visibility = View.GONE
         }
         
-        clockContainer.addView(clockView)
-        clockContainer.addView(dateView)
+        clockColumn.addView(clockView)
+        clockColumn.addView(dateView)
+        
+        // Weather view (horizontal: icon + temp, vertically centered to clock column)
+        weatherView = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = 24  // Gap between clock and weather
+            }
+        }
+        
+        weatherIcon = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 48f  // Large icon
+            setShadowLayer(4f, 2f, 2f, Color.BLACK)
+        }
+        
+        weatherTemp = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setShadowLayer(4f, 2f, 2f, Color.BLACK)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = 4
+                bottomMargin = 8  // Align with top of icon
+            }
+            gravity = Gravity.TOP
+        }
+        
+        weatherView.addView(weatherIcon)
+        weatherView.addView(weatherTemp)
+        
+        mainRow.addView(clockColumn)
+        mainRow.addView(weatherView)
+        overlayContainer.addView(mainRow)
         
         container.addView(imageContainer)
-        container.addView(clockContainer)
+        container.addView(overlayContainer)
         
         // Initialize renderer
         renderer = SlideshowRenderer(context, imageContainer).apply {
@@ -287,18 +342,18 @@ class SlideshowController(
     
     private fun setupClock(display: DisplayConfig) {
         if (!display.clock) {
-            clockContainer.visibility = View.GONE
+            overlayContainer.visibility = View.GONE
             return
         }
         
-        clockContainer.visibility = View.VISIBLE
+        overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
         
         if (display.date) {
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.35f).coerceAtLeast(10f)
             dateView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = -35  // Negative margin to pull date closer to clock
@@ -307,15 +362,10 @@ class SlideshowController(
             dateView.visibility = View.GONE
         }
         
-        // Text alignment within each view (works because width is MATCH_PARENT)
-        val textAlignment = when (display.clockPosition) {
-            0, 3 -> View.TEXT_ALIGNMENT_VIEW_START   // Left positions
-            1, 4, 6 -> View.TEXT_ALIGNMENT_CENTER    // Center positions
-            else -> View.TEXT_ALIGNMENT_VIEW_END     // Right positions
-        }
-        clockView.textAlignment = textAlignment
-        dateView.textAlignment = textAlignment
+        // Setup weather if enabled
+        setupWeather(display)
         
+        // Position the overlay container
         val layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
@@ -333,9 +383,63 @@ class SlideshowController(
                 else -> Gravity.BOTTOM or Gravity.START
             }
         }
-        clockContainer.layoutParams = layoutParams
+        overlayContainer.layoutParams = layoutParams
         
         handler.post(clockRunnable)
+    }
+    
+    private fun setupWeather(display: DisplayConfig) {
+        val weather = display.weather
+        if (weather == null || !weather.enabled) {
+            weatherView.visibility = View.GONE
+            return
+        }
+        
+        weatherView.visibility = View.VISIBLE
+        
+        // Scale weather icon relative to clock font size
+        weatherIcon.textSize = display.clockFontSize * 1.5f
+        weatherTemp.textSize = display.clockFontSize * 0.5f
+        
+        // Update weather display
+        updateWeatherDisplay(weather)
+    }
+    
+    private fun updateWeatherDisplay(weather: WeatherConfig) {
+        // Map condition to emoji icon
+        val icon = getWeatherIcon(weather.condition)
+        weatherIcon.text = icon
+        
+        // Format temperature
+        val temp = weather.temperature
+        if (temp != null) {
+            val tempInt = temp.toInt()
+            val unit = weather.temperatureUnit
+            weatherTemp.text = "$tempInt$unit"
+        } else {
+            weatherTemp.text = ""
+        }
+        
+        Log.d(TAG, "Weather updated: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
+    }
+    
+    /**
+     * Map weather condition string to emoji icon
+     */
+    private fun getWeatherIcon(condition: String?): String {
+        return when (condition?.lowercase()) {
+            "sunny", "clear", "clear-night" -> "☀️"
+            "partlycloudy", "partly-cloudy", "partly_cloudy" -> "⛅"
+            "cloudy" -> "☁️"
+            "rainy", "rain", "pouring" -> "🌧️"
+            "snowy", "snow", "snowy-rainy" -> "❄️"
+            "windy", "wind" -> "💨"
+            "fog", "foggy", "hazy" -> "🌫️"
+            "lightning", "lightning-rainy", "thunderstorm" -> "⛈️"
+            "hail" -> "🌨️"
+            "exceptional" -> "⚠️"
+            else -> "🌤️"  // Default to partly sunny
+        }
     }
     
     private fun applyPanSpeed(panSpeed: Float, reload: Boolean = false) {
@@ -487,42 +591,25 @@ class SlideshowController(
     private fun showError(message: String) {
         Log.e(TAG, message)
         
-        // Hide clock container if showing error
-        if (::clockContainer.isInitialized) {
-            clockContainer.visibility = View.GONE
+        // Hide overlay container if showing error
+        if (::overlayContainer.isInitialized) {
+            overlayContainer.visibility = View.GONE
         }
         
-        // Create error text view if clock isn't initialized yet
-        if (!::clockView.isInitialized) {
-            val errorView = TextView(context).apply {
-                text = message
-                setTextColor(Color.WHITE)
-                textSize = 20f
-                gravity = Gravity.CENTER
-                setShadowLayer(4f, 2f, 2f, Color.BLACK)
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
-                )
-            }
-            container.addView(errorView)
-        } else {
-            clockView.apply {
-                text = message
-                textSize = 20f
-                gravity = Gravity.CENTER
-                visibility = View.VISIBLE
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
-                )
-            }
-            // Add it directly to container instead of clockContainer
-            clockContainer.removeView(clockView)
-            container.addView(clockView)
+        // Create error text view
+        val errorView = TextView(context).apply {
+            text = message
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setShadowLayer(4f, 2f, 2f, Color.BLACK)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
         }
+        container.addView(errorView)
     }
     
     // --- Callbacks for HTTP Server ---
