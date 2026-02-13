@@ -22,6 +22,7 @@ import com.google.gson.Gson
 import de.koshi.photodream.R
 import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
+import android.graphics.drawable.GradientDrawable
 import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.ui.SlideshowRenderer
 import de.koshi.photodream.util.ConfigManager
@@ -61,7 +62,11 @@ class SlideshowController(
     private lateinit var weatherIcon: ImageView
     private lateinit var weatherTemp: TextView
     private lateinit var updateBanner: TextView       // "Update verfügbar" banner
+    private lateinit var infoPanel: LinearLayout      // Image info panel (long-press)
     private lateinit var renderer: SlideshowRenderer
+    
+    // Info panel state
+    private var isInfoPanelVisible = false
     
     // Update state
     private var pendingUpdateInfo: HttpServerService.UpdateInfo? = null
@@ -94,9 +99,19 @@ class SlideshowController(
         private val SWIPE_VELOCITY_THRESHOLD = 100
         
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // If info panel is visible, hide it instead of finishing
+            if (isInfoPanelVisible) {
+                hideInfoPanel()
+                return true
+            }
             Log.d(TAG, "Tap detected - finishing")
             onFinish()
             return true
+        }
+        
+        override fun onLongPress(e: MotionEvent) {
+            Log.d(TAG, "Long press detected - showing info panel")
+            showInfoPanel()
         }
         
         override fun onFling(
@@ -316,8 +331,32 @@ class SlideshowController(
             }
         }
         
+        // Info panel (shown on long press)
+        infoPanel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(32, 24, 32, 24)
+            
+            // Semi-transparent black background with rounded corners
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#CC000000"))  // 80% opacity black
+                cornerRadius = 24f
+            }
+            
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val margin = 48
+                setMargins(margin, margin, margin, margin)
+                // Default to right side (will be adjusted based on clock position)
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            }
+        }
+        
         container.addView(imageContainer)
         container.addView(overlayContainer)
+        container.addView(infoPanel)
         container.addView(updateBanner)
         
         // Initialize renderer
@@ -850,6 +889,181 @@ class SlideshowController(
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to install update: ${e.message}", e)
+        }
+    }
+    
+    // --- Info Panel ---
+    
+    private fun showInfoPanel() {
+        if (playlist.isEmpty()) return
+        
+        val currentAsset = playlist.getOrNull(currentIndex) ?: return
+        isInfoPanelVisible = true
+        
+        // Position panel on opposite side of clock
+        val clockPosition = config?.display?.clockPosition ?: 3
+        val clockOnLeft = clockPosition in listOf(0, 3)  // top-left or bottom-left
+        
+        (infoPanel.layoutParams as FrameLayout.LayoutParams).gravity = 
+            if (clockOnLeft) Gravity.END or Gravity.CENTER_VERTICAL
+            else Gravity.START or Gravity.CENTER_VERTICAL
+        
+        // Show loading state
+        infoPanel.removeAllViews()
+        addInfoText("Lade...", bold = false, size = 16f)
+        infoPanel.visibility = View.VISIBLE
+        
+        // Fetch details async
+        scope.launch {
+            val details = immichClient?.getAssetDetails(currentAsset.id)
+            
+            handler.post {
+                infoPanel.removeAllViews()
+                populateInfoPanel(currentAsset, details)
+            }
+        }
+        
+        // Pause slideshow timer while panel is shown
+        handler.removeCallbacks(slideshowRunnable)
+    }
+    
+    private fun hideInfoPanel() {
+        isInfoPanelVisible = false
+        infoPanel.visibility = View.GONE
+        
+        // Resume slideshow timer
+        resetSlideshowTimer()
+    }
+    
+    private fun populateInfoPanel(asset: Asset, details: AssetDetails?) {
+        val profileName = config?.profile?.name ?: "Unknown"
+        val position = "${currentIndex + 1} / ${playlist.size}"
+        
+        // Profile & Position
+        addInfoText("📁 $profileName", bold = true, size = 18f)
+        addInfoText("📍 Bild $position", bold = false, size = 14f, topMargin = 4)
+        
+        // Divider
+        addDivider()
+        
+        // Filename
+        val filename = details?.originalFileName ?: asset.originalFileName ?: asset.originalPath.substringAfterLast('/')
+        addInfoText("📄 $filename", bold = false, size = 14f)
+        
+        // Date
+        val dateStr = details?.fileCreatedAt ?: asset.fileCreatedAt
+        if (dateStr != null) {
+            val formatted = formatDate(dateStr)
+            addInfoText("📅 $formatted", bold = false, size = 14f, topMargin = 4)
+        }
+        
+        // People
+        val people = details?.people
+        if (!people.isNullOrEmpty()) {
+            val names = people.mapNotNull { it.name }.filter { it.isNotBlank() }
+            if (names.isNotEmpty()) {
+                addInfoText("👤 ${names.joinToString(", ")}", bold = false, size = 14f, topMargin = 4)
+            }
+        }
+        
+        // Tags
+        val tags = details?.tags
+        if (!tags.isNullOrEmpty()) {
+            val tagNames = tags.mapNotNull { it.name ?: it.value }.filter { it.isNotBlank() }
+            if (tagNames.isNotEmpty()) {
+                addInfoText("🏷️ ${tagNames.joinToString(", ")}", bold = false, size = 14f, topMargin = 4)
+            }
+        }
+        
+        // EXIF info
+        val exif = details?.exifInfo
+        if (exif != null) {
+            val exifParts = mutableListOf<String>()
+            
+            // Camera
+            val camera = listOfNotNull(exif.make, exif.model)
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+            if (camera.isNotBlank()) {
+                addDivider()
+                addInfoText("📷 $camera", bold = false, size = 14f)
+            }
+            
+            // Lens
+            exif.lensModel?.let { lens ->
+                if (lens.isNotBlank()) {
+                    addInfoText("🔭 $lens", bold = false, size = 13f, topMargin = 2)
+                }
+            }
+            
+            // Settings line: f/2.8 · 1/250s · ISO 400 · 50mm
+            val settings = mutableListOf<String>()
+            exif.fNumber?.let { settings.add("f/${it}") }
+            exif.exposureTime?.let { settings.add("${it}s") }
+            exif.iso?.let { settings.add("ISO $it") }
+            exif.focalLength?.let { settings.add("${it.toInt()}mm") }
+            
+            if (settings.isNotEmpty()) {
+                addInfoText("⚙️ ${settings.joinToString(" · ")}", bold = false, size = 13f, topMargin = 2)
+            }
+            
+            // Location
+            val location = listOfNotNull(exif.city, exif.state, exif.country)
+                .filter { it.isNotBlank() }
+                .joinToString(", ")
+            if (location.isNotBlank()) {
+                addInfoText("📍 $location", bold = false, size = 13f, topMargin = 4)
+            }
+        }
+        
+        // Favorite indicator
+        if (details?.isFavorite == true) {
+            addInfoText("❤️ Favorit", bold = false, size = 13f, topMargin = 4)
+        }
+    }
+    
+    private fun addInfoText(text: String, bold: Boolean, size: Float, topMargin: Int = 0) {
+        val textView = TextView(context).apply {
+            this.text = text
+            setTextColor(Color.WHITE)
+            textSize = size
+            if (bold) {
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            setShadowLayer(2f, 1f, 1f, Color.BLACK)
+            maxWidth = 500  // Prevent overly wide panel
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                this.topMargin = topMargin
+            }
+        }
+        infoPanel.addView(textView)
+    }
+    
+    private fun addDivider() {
+        val divider = View(context).apply {
+            setBackgroundColor(Color.parseColor("#44FFFFFF"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                2
+            ).apply {
+                topMargin = 12
+                bottomMargin = 12
+            }
+        }
+        infoPanel.addView(divider)
+    }
+    
+    private fun formatDate(isoDate: String): String {
+        return try {
+            val instant = java.time.Instant.parse(isoDate)
+            val zoned = instant.atZone(java.time.ZoneId.systemDefault())
+            val formatter = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+            zoned.format(formatter)
+        } catch (e: Exception) {
+            isoDate.substringBefore('T')  // Fallback: just the date part
         }
     }
 }

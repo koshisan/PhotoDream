@@ -1,6 +1,7 @@
 package de.koshi.photodream.api
 
 import de.koshi.photodream.model.Asset
+import de.koshi.photodream.model.AssetDetails
 import de.koshi.photodream.model.RandomSearchRequest
 import de.koshi.photodream.model.SearchResponse
 import de.koshi.photodream.model.SmartSearchRequest
@@ -37,4 +38,12 @@ interface ImmichApi {
     suspend fun getRandomAssets(
         @Query("count") count: Int = 200
     ): List<Asset>
+    
+    /**
+     * Get detailed asset info (includes people, tags, exif)
+     */
+    @GET("api/assets/{id}")
+    suspend fun getAssetDetails(
+        @Path("id") assetId: String
+    ): AssetDetails
 }

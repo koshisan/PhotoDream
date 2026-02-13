@@ -2,6 +2,7 @@ package de.koshi.photodream.api
 
 import android.util.Log
 import de.koshi.photodream.model.Asset
+import de.koshi.photodream.model.AssetDetails
 import de.koshi.photodream.model.ImmichConfig
 import de.koshi.photodream.model.RandomSearchRequest
 import de.koshi.photodream.model.SearchFilter
@@ -326,5 +327,19 @@ class ImmichClient(private val config: ImmichConfig) {
      */
     fun getAuthHeaders(): Map<String, String> {
         return mapOf("x-api-key" to config.apiKey)
+    }
+    
+    /**
+     * Get detailed info for a specific asset (people, tags, exif)
+     */
+    suspend fun getAssetDetails(assetId: String): AssetDetails? {
+        return try {
+            val details = api.getAssetDetails(assetId)
+            Log.d(TAG, "Got asset details: ${details.originalFileName}, ${details.people?.size ?: 0} people, ${details.tags?.size ?: 0} tags")
+            details
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get asset details: ${e.message}", e)
+            null
+        }
     }
 }

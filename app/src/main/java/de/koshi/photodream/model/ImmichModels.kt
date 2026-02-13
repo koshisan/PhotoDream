@@ -69,6 +69,78 @@ enum class ThumbnailSize(val value: String) {
 }
 
 /**
+ * Extended asset details from GET /api/assets/{id}
+ * Contains additional info not included in search results
+ */
+data class AssetDetails(
+    val id: String,
+    
+    @SerializedName("originalPath")
+    val originalPath: String? = null,
+    
+    @SerializedName("originalFileName")
+    val originalFileName: String? = null,
+    
+    @SerializedName("fileCreatedAt")
+    val fileCreatedAt: String? = null,
+    
+    @SerializedName("localDateTime")
+    val localDateTime: String? = null,
+    
+    @SerializedName("people")
+    val people: List<PersonInfo>? = null,
+    
+    @SerializedName("tags")
+    val tags: List<TagInfo>? = null,
+    
+    @SerializedName("exifInfo")
+    val exifInfo: ExifInfo? = null,
+    
+    @SerializedName("isFavorite")
+    val isFavorite: Boolean = false
+)
+
+data class PersonInfo(
+    val id: String,
+    val name: String? = null,
+    
+    @SerializedName("thumbnailPath")
+    val thumbnailPath: String? = null
+)
+
+data class TagInfo(
+    val id: String,
+    val name: String? = null,
+    val value: String? = null  // Some tags have value, e.g. "Rating: 5"
+)
+
+data class ExifInfo(
+    val make: String? = null,           // Camera brand (e.g. "Sony")
+    val model: String? = null,          // Camera model (e.g. "ILCE-7M3")
+    
+    @SerializedName("lensModel")
+    val lensModel: String? = null,      // Lens (e.g. "FE 24-70mm F2.8 GM")
+    
+    @SerializedName("fNumber")
+    val fNumber: Float? = null,         // Aperture (e.g. 2.8)
+    
+    @SerializedName("exposureTime")
+    val exposureTime: String? = null,   // Shutter speed (e.g. "1/250")
+    
+    val iso: Int? = null,               // ISO value
+    
+    @SerializedName("focalLength")
+    val focalLength: Float? = null,     // Focal length in mm
+    
+    val city: String? = null,
+    val state: String? = null,
+    val country: String? = null,
+    
+    @SerializedName("dateTimeOriginal")
+    val dateTimeOriginal: String? = null
+)
+
+/**
  * Smart search request body - supports full Immich search filter
  */
 data class SmartSearchRequest(
