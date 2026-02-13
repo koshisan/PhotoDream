@@ -4,20 +4,29 @@ plugins {
 }
 
 // Load keystore properties from local file (not in git)
+// If not present or invalid, build will use default debug keystore
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(keystorePropertiesFile.inputStream())
+val useCustomKeystore = keystorePropertiesFile.exists() && run {
+    try {
+        val props = java.util.Properties()
+        props.load(keystorePropertiesFile.inputStream())
+        props.containsKey("storeFile") && props.containsKey("storePassword")
+    } catch (e: Exception) {
+        false
+    }
 }
 
 android {
     namespace = "de.koshi.photodream"
     compileSdk = 36
 
-    // Signing config - uses same key for debug and release
-    signingConfigs {
-        create("release") {
-            if (keystorePropertiesFile.exists()) {
+    // Signing config - only if keystore.properties exists and is valid
+    if (useCustomKeystore) {
+        val keystoreProperties = java.util.Properties().apply {
+            load(keystorePropertiesFile.inputStream())
+        }
+        signingConfigs {
+            create("release") {
                 storeFile = file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
                 keyAlias = keystoreProperties["keyAlias"] as String
@@ -38,7 +47,7 @@ android {
 
     buildTypes {
         debug {
-            if (keystorePropertiesFile.exists()) {
+            if (useCustomKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
@@ -48,7 +57,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (keystorePropertiesFile.exists()) {
+            if (useCustomKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
