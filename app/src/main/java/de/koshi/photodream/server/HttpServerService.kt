@@ -44,6 +44,11 @@ class HttpServerService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "photodream_server"
         
+        // SharedPreferences for persistent update state
+        private const val PREFS_NAME = "photodream_updates"
+        private const val PREF_UPDATE_VERSION = "pending_update_version"
+        private const val PREF_UPDATE_APK_PATH = "pending_update_apk_path"
+        
         fun start(context: Context, port: Int = DEFAULT_PORT) {
             val intent = Intent(context, HttpServerService::class.java).apply {
                 putExtra("port", port)
@@ -92,9 +97,43 @@ class HttpServerService : Service() {
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
     var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
     
-    // Update state
+    // Update state (persisted to SharedPreferences)
     var pendingUpdate: UpdateInfo? = null
         private set
+    
+    private val updatePrefs by lazy {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    
+    /**
+     * Load pending update from SharedPreferences (survives app restart)
+     */
+    private fun loadPendingUpdate(): UpdateInfo? {
+        val version = updatePrefs.getString(PREF_UPDATE_VERSION, null) ?: return null
+        val apkPath = updatePrefs.getString(PREF_UPDATE_APK_PATH, null) ?: return null
+        
+        // Verify APK still exists
+        val apkFile = java.io.File(apkPath)
+        if (!apkFile.exists()) {
+            Log.w(TAG, "Pending update APK no longer exists, clearing state")
+            clearPendingUpdate()
+            return null
+        }
+        
+        Log.i(TAG, "Loaded pending update from prefs: $version at $apkPath")
+        return UpdateInfo(version, apkPath)
+    }
+    
+    /**
+     * Save pending update to SharedPreferences
+     */
+    private fun savePendingUpdate(updateInfo: UpdateInfo) {
+        updatePrefs.edit()
+            .putString(PREF_UPDATE_VERSION, updateInfo.version)
+            .putString(PREF_UPDATE_APK_PATH, updateInfo.apkPath)
+            .apply()
+        Log.i(TAG, "Saved pending update to prefs: ${updateInfo.version}")
+    }
     
     data class UpdateInfo(
         val version: String,
@@ -127,6 +166,11 @@ class HttpServerService : Service() {
     
     fun clearPendingUpdate() {
         pendingUpdate = null
+        updatePrefs.edit()
+            .remove(PREF_UPDATE_VERSION)
+            .remove(PREF_UPDATE_APK_PATH)
+            .apply()
+        Log.i(TAG, "Cleared pending update from prefs")
     }
     
     inner class LocalBinder : Binder() {
@@ -161,6 +205,9 @@ class HttpServerService : Service() {
             currentConfig = cachedConfig
             Log.i(TAG, "Loaded cached config for device: ${cachedConfig.deviceId}")
         }
+        
+        // Load pending update from SharedPreferences (survives app restart)
+        pendingUpdate = loadPendingUpdate()
         
         // Return sticky so system restarts service if killed
         return START_STICKY
@@ -359,6 +406,7 @@ class HttpServerService : Service() {
                     if (apkFile != null) {
                         val updateInfo = UpdateInfo(version, apkFile.absolutePath)
                         pendingUpdate = updateInfo
+                        savePendingUpdate(updateInfo)  // Persist to SharedPreferences
                         mainHandler.post { onUpdateAvailable?.invoke(updateInfo) }
                         Log.i(TAG, "Update prepared: $version at ${apkFile.absolutePath}")
                     }
