@@ -125,6 +125,10 @@ class HttpServerService : Service() {
         currentStatus = status
     }
     
+    fun clearPendingUpdate() {
+        pendingUpdate = null
+    }
+    
     inner class LocalBinder : Binder() {
         fun getService(): HttpServerService = this@HttpServerService
     }
@@ -405,10 +409,6 @@ class HttpServerService : Service() {
                 Log.i(TAG, "APK downloaded: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
                 return apkFile
             }
-        }
-        
-        fun clearPendingUpdate() {
-            pendingUpdate = null
         }
         
         private fun handleHealth(): Response {
