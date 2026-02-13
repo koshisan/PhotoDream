@@ -384,6 +384,9 @@ class SlideshowController(
     
     private fun unbindHttpService() {
         if (serviceBound) {
+            // Send "inactive" status to HA before unbinding
+            reportInactiveToHA()
+            
             httpService?.apply {
                 onConfigReceived = null
                 onRefreshConfig = null
@@ -397,6 +400,42 @@ class SlideshowController(
             context.unbindService(serviceConnection)
             serviceBound = false
             Log.d(TAG, "HttpServerService unbound")
+        }
+    }
+    
+    /**
+     * Send inactive status to Home Assistant when slideshow stops
+     */
+    private fun reportInactiveToHA() {
+        val webhookUrl = config?.webhookUrl
+        if (webhookUrl.isNullOrBlank()) return
+        
+        scope.launch(Dispatchers.IO) {
+            try {
+                val inactiveStatus = mapOf(
+                    "device_id" to (config?.deviceId ?: "unknown"),
+                    "online" to true,
+                    "active" to false,
+                    "current_image" to null,
+                    "current_image_url" to null,
+                    "profile" to config?.profile?.name,
+                    "mac_address" to DeviceInfo.getMacAddress(context),
+                    "ip_address" to DeviceInfo.getIpAddress(context),
+                    "app_version" to de.koshi.photodream.BuildConfig.VERSION_NAME
+                )
+                
+                val json = gson.toJson(inactiveStatus)
+                val request = Request.Builder()
+                    .url(webhookUrl)
+                    .post(json.toRequestBody("application/json".toMediaType()))
+                    .build()
+                
+                httpClient.newCall(request).execute().use { response ->
+                    Log.d(TAG, "Reported inactive to HA: ${response.code}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to report inactive to HA: ${e.message}", e)
+            }
         }
     }
     
@@ -626,12 +665,33 @@ class SlideshowController(
         if (playlist.isEmpty()) return
         currentIndex = (currentIndex + 1) % playlist.size
         showCurrentImage()
+        // Refresh info panel if visible
+        if (isInfoPanelVisible) {
+            refreshInfoPanel()
+        }
     }
     
     private fun showPreviousImage() {
         if (playlist.isEmpty()) return
         currentIndex = if (currentIndex > 0) currentIndex - 1 else playlist.size - 1
         showCurrentImage()
+        // Refresh info panel if visible
+        if (isInfoPanelVisible) {
+            refreshInfoPanel()
+        }
+    }
+    
+    private fun refreshInfoPanel() {
+        val currentAsset = playlist.getOrNull(currentIndex) ?: return
+        
+        // Show loading briefly, then fetch new details
+        scope.launch {
+            val details = immichClient?.getAssetDetails(currentAsset.id)
+            handler.post {
+                infoPanel.removeAllViews()
+                populateInfoPanel(currentAsset, details)
+            }
+        }
     }
     
     private fun resetSlideshowTimer() {
