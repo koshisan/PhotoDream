@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -43,5 +46,12 @@ jobs:
         with:
           files: |
             photodream-*.apk
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload APK as artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ steps.version.outputs.VERSION }}
+          path: photodream-*.apk
