@@ -60,7 +60,11 @@ class SlideshowController(
     private lateinit var dateView: TextView
     private lateinit var weatherIcon: ImageView
     private lateinit var weatherTemp: TextView
+    private lateinit var updateBanner: TextView       // "Update verfügbar" banner
     private lateinit var renderer: SlideshowRenderer
+    
+    // Update state
+    private var pendingUpdateInfo: HttpServerService.UpdateInfo? = null
     
     // State
     private var config: DeviceConfig? = null
@@ -148,6 +152,9 @@ class SlideshowController(
                 onSetProfile = { profile -> setProfile(profile) }
                 getStatus = { getCurrentStatus() }
                 getPlaylistInfo = { getPlaylistInfoInternal() }
+                onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
+                // Check if there's already a pending update
+                pendingUpdate?.let { showUpdateAvailable(it) }
                 updateStatus(getCurrentStatus())
             }
             serviceBound = true
@@ -289,8 +296,29 @@ class SlideshowController(
         mainRow.addView(rightColumn)
         overlayContainer.addView(mainRow)
         
+        // Update banner (shown when update is available)
+        updateBanner = TextView(context).apply {
+            text = "⬆️ Update verfügbar — Tippen zum Installieren"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setBackgroundColor(Color.parseColor("#CC2196F3"))  // Semi-transparent blue
+            setPadding(32, 16, 32, 16)
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            }
+            setOnClickListener {
+                pendingUpdateInfo?.let { installUpdate(it) }
+            }
+        }
+        
         container.addView(imageContainer)
         container.addView(overlayContainer)
+        container.addView(updateBanner)
         
         // Initialize renderer
         renderer = SlideshowRenderer(context, imageContainer).apply {
@@ -324,6 +352,7 @@ class SlideshowController(
                 onSetProfile = null
                 getStatus = null
                 getPlaylistInfo = null
+                onUpdateAvailable = null
                 updateStatus(DeviceStatus(online = true, active = false))
             }
             context.unbindService(serviceConnection)
@@ -776,5 +805,51 @@ class SlideshowController(
             currentImage = assetToImageInfo(currAsset),
             nextImage = assetToImageInfo(nextAsset)
         )
+    }
+    
+    private fun showUpdateAvailable(updateInfo: HttpServerService.UpdateInfo) {
+        pendingUpdateInfo = updateInfo
+        handler.post {
+            updateBanner.text = "⬆️ Update ${updateInfo.version} verfügbar — Tippen zum Installieren"
+            updateBanner.visibility = View.VISIBLE
+            Log.i(TAG, "Showing update banner for version ${updateInfo.version}")
+        }
+    }
+    
+    private fun installUpdate(updateInfo: HttpServerService.UpdateInfo) {
+        Log.i(TAG, "Installing update from ${updateInfo.apkPath}")
+        
+        try {
+            val apkFile = java.io.File(updateInfo.apkPath)
+            if (!apkFile.exists()) {
+                Log.e(TAG, "APK file not found: ${updateInfo.apkPath}")
+                return
+            }
+            
+            // Use FileProvider for Android 7+ compatibility
+            val apkUri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            
+            context.startActivity(intent)
+            
+            // Hide banner and clear pending update
+            handler.post {
+                updateBanner.visibility = View.GONE
+                pendingUpdateInfo = null
+            }
+            httpService?.clearPendingUpdate()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to install update: ${e.message}", e)
+        }
     }
 }

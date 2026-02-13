@@ -90,6 +90,16 @@ class HttpServerService : Service() {
     var onSetProfile: ((String) -> Unit)? = null
     var getStatus: (() -> DeviceStatus)? = null
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
+    var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
+    
+    // Update state
+    var pendingUpdate: UpdateInfo? = null
+        private set
+    
+    data class UpdateInfo(
+        val version: String,
+        val apkPath: String
+    )
     
     /**
      * Playlist information for /health endpoint
@@ -232,6 +242,7 @@ class HttpServerService : Service() {
                     method == Method.POST && uri == "/refresh-config" -> handleRefreshConfig()
                     method == Method.POST && uri == "/next" -> handleNext()
                     method == Method.POST && uri == "/set-profile" -> handleSetProfile(session)
+                    method == Method.POST && uri == "/prepare-update" -> handlePrepareUpdate(session)
                     else -> newFixedLengthResponse(
                         Response.Status.NOT_FOUND,
                         MIME_PLAINTEXT,
@@ -318,6 +329,88 @@ class HttpServerService : Service() {
             }
         }
         
+        private fun handlePrepareUpdate(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+            
+            val postData = body["postData"] ?: "{}"
+            val request = gson.fromJson(postData, Map::class.java)
+            val apkUrl = request["apk_url"] as? String
+            val version = request["version"] as? String ?: "unknown"
+            
+            if (apkUrl.isNullOrBlank()) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Missing 'apk_url' field"
+                )
+            }
+            
+            Log.i(TAG, "Preparing update: version=$version, url=$apkUrl")
+            
+            // Download APK in background
+            Thread {
+                try {
+                    val apkFile = downloadApk(apkUrl, version)
+                    if (apkFile != null) {
+                        val updateInfo = UpdateInfo(version, apkFile.absolutePath)
+                        pendingUpdate = updateInfo
+                        mainHandler.post { onUpdateAvailable?.invoke(updateInfo) }
+                        Log.i(TAG, "Update prepared: $version at ${apkFile.absolutePath}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to download APK: ${e.message}", e)
+                }
+            }.start()
+            
+            return jsonResponse(mapOf(
+                "success" to true,
+                "message" to "Update download started",
+                "version" to version
+            ))
+        }
+        
+        private fun downloadApk(url: String, version: String): java.io.File? {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "APK download failed: ${response.code}")
+                    return null
+                }
+                
+                // Save to app's cache directory
+                val cacheDir = this@HttpServerService.cacheDir
+                val apkFile = java.io.File(cacheDir, "photodream-update-$version.apk")
+                
+                // Delete old APKs
+                cacheDir.listFiles()?.filter { 
+                    it.name.startsWith("photodream-update-") && it.name != apkFile.name 
+                }?.forEach { it.delete() }
+                
+                // Write new APK
+                response.body?.byteStream()?.use { input ->
+                    apkFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                
+                Log.i(TAG, "APK downloaded: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
+                return apkFile
+            }
+        }
+        
+        fun clearPendingUpdate() {
+            pendingUpdate = null
+        }
+        
         private fun handleHealth(): Response {
             // Parse stored JSON to include as nested object (not escaped string)
             val configObject = lastReceivedConfigJson?.let {
@@ -362,6 +455,10 @@ class HttpServerService : Service() {
                         "original_path" to img.originalPath,
                         "created_at" to img.createdAt
                     )}
+                )},
+                "pending_update" to pendingUpdate?.let { mapOf(
+                    "version" to it.version,
+                    "apk_path" to it.apkPath
                 )},
                 "last_received_config" to configObject
             ))
