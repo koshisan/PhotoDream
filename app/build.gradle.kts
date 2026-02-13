@@ -12,9 +12,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "de.koshi.photodream"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     // Signing config - uses same key for debug and release
     signingConfigs {
