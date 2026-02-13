@@ -202,8 +202,9 @@ class SlideshowController(
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
-        scope.cancel()
+        // Report inactive BEFORE cancelling scope (needs coroutine)
         unbindHttpService()
+        scope.cancel()
     }
     
     /**
@@ -405,12 +406,14 @@ class SlideshowController(
     
     /**
      * Send inactive status to Home Assistant when slideshow stops
+     * Runs on a separate thread to ensure it completes even during shutdown
      */
     private fun reportInactiveToHA() {
         val webhookUrl = config?.webhookUrl
         if (webhookUrl.isNullOrBlank()) return
         
-        scope.launch(Dispatchers.IO) {
+        // Use a simple Thread instead of coroutine scope (which may be cancelled)
+        Thread {
             try {
                 val inactiveStatus = mapOf(
                     "device_id" to (config?.deviceId ?: "unknown"),
@@ -436,7 +439,7 @@ class SlideshowController(
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to report inactive to HA: ${e.message}", e)
             }
-        }
+        }.start()
     }
     
     private fun loadConfigAndStart() {
