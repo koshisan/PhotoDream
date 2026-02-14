@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">PhotoDream</string>
+    <string name="accessibility_service_description">Captures keyboard key presses and sends them to Home Assistant. Used for remote control and automation triggers.</string>
 </resources>
