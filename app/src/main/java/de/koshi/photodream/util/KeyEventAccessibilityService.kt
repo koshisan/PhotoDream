@@ -2,6 +2,7 @@ package de.koshi.photodream.util
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
