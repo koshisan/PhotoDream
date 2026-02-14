@@ -1,10 +1,12 @@
 package de.koshi.photodream
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
@@ -45,6 +47,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAutoBrightness: MaterialButton
     private lateinit var txtBrightnessPermission: TextView
     
+    // Key capture views
+    private lateinit var cardKeyCapture: MaterialCardView
+    private lateinit var txtKeyCaptureStatus: TextView
+    private lateinit var btnEnableKeyCapture: MaterialButton
+    
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pollingJob: Job? = null
     
@@ -74,6 +81,11 @@ class MainActivity : AppCompatActivity() {
         btnAutoBrightness = findViewById(R.id.btnAutoBrightness)
         txtBrightnessPermission = findViewById(R.id.txtBrightnessPermission)
         
+        // Find key capture views
+        cardKeyCapture = findViewById(R.id.cardKeyCapture)
+        txtKeyCaptureStatus = findViewById(R.id.txtKeyCaptureStatus)
+        btnEnableKeyCapture = findViewById(R.id.btnEnableKeyCapture)
+        
         // Load existing settings
         loadSettings()
         
@@ -82,6 +94,9 @@ class MainActivity : AppCompatActivity() {
         
         // Initialize brightness control
         setupBrightnessControl()
+        
+        // Initialize key capture control
+        setupKeyCaptureControl()
         
         // Check if already configured
         checkExistingConfig()
@@ -95,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // Refresh permission states
         updateBrightnessPermissionUI()
+        updateKeyCaptureStatus()
     }
     
     private fun setupBrightnessControl() {
@@ -220,6 +236,47 @@ class MainActivity : AppCompatActivity() {
             val enabled = BrightnessManager.isAutoBrightnessEnabled(this)
             btnAutoBrightness.text = if (enabled) "Auto-Brightness: ON" else "Auto-Brightness: OFF"
         }
+    }
+    
+    // ========== Key Capture Control ==========
+    
+    private fun setupKeyCaptureControl() {
+        updateKeyCaptureStatus()
+        
+        btnEnableKeyCapture.setOnClickListener {
+            // Open Accessibility Settings
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivity(intent)
+            Toast.makeText(this, "Enable 'PhotoDream Key Capture'", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    private fun updateKeyCaptureStatus() {
+        val isEnabled = isAccessibilityServiceEnabled()
+        
+        if (isEnabled) {
+            txtKeyCaptureStatus.text = "Status: ✓ Enabled — Key presses will be sent to Home Assistant"
+            txtKeyCaptureStatus.setTextColor(getColor(android.R.color.holo_green_dark))
+            btnEnableKeyCapture.text = "Accessibility Settings"
+        } else {
+            txtKeyCaptureStatus.text = "Status: Disabled — Tap button below to enable"
+            txtKeyCaptureStatus.setTextColor(getColor(android.R.color.darker_gray))
+            btnEnableKeyCapture.text = "Enable Key Capture"
+        }
+    }
+    
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val am = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC)
+        
+        for (service in enabledServices) {
+            val serviceId = service.resolveInfo.serviceInfo
+            if (serviceId.packageName == packageName && 
+                serviceId.name == "de.koshi.photodream.util.KeyEventAccessibilityService") {
+                return true
+            }
+        }
+        return false
     }
     
     private fun startHttpServer() {
