@@ -7,17 +7,24 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
+import de.koshi.photodream.BuildConfig
 import de.koshi.photodream.MainActivity
 import de.koshi.photodream.R
+import de.koshi.photodream.SlideshowActivity
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
 import de.koshi.photodream.util.BrightnessManager
@@ -215,8 +222,71 @@ class HttpServerService : Service() {
         // Load pending update from SharedPreferences (survives app restart)
         pendingUpdate = loadPendingUpdate()
         
+        // Initialize device info in status
+        updateDeviceInfo()
+        
         // Return sticky so system restarts service if killed
         return START_STICKY
+    }
+    
+    /**
+     * Update currentStatus with device info (IP, MAC, display resolution, app version)
+     * This ensures status is available even when slideshow is not running.
+     */
+    private fun updateDeviceInfo() {
+        val displayMetrics = DisplayMetrics()
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(displayMetrics)
+        
+        currentStatus = currentStatus.copy(
+            ipAddress = getIpAddress(),
+            macAddress = getMacAddress(),
+            displayWidth = displayMetrics.widthPixels,
+            displayHeight = displayMetrics.heightPixels,
+            appVersion = BuildConfig.VERSION_NAME
+        )
+        
+        Log.i(TAG, "Device info updated: IP=${currentStatus.ipAddress}, " +
+                "Display=${currentStatus.displayWidth}x${currentStatus.displayHeight}, " +
+                "Version=${currentStatus.appVersion}")
+    }
+    
+    private fun getIpAddress(): String? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                if (networkInterface.isLoopback || !networkInterface.isUp) continue
+                
+                val addresses = networkInterface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+                    if (address is Inet4Address && !address.isLoopbackAddress) {
+                        return address.hostAddress
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting IP address: ${e.message}")
+        }
+        return null
+    }
+    
+    private fun getMacAddress(): String? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                if (networkInterface.name.startsWith("wlan") || networkInterface.name.startsWith("eth")) {
+                    val mac = networkInterface.hardwareAddress ?: continue
+                    return mac.joinToString(":") { String.format("%02X", it) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting MAC address: ${e.message}")
+        }
+        return null
     }
     
     private fun createNotificationChannel() {
@@ -681,7 +751,10 @@ class HttpServerService : Service() {
         // ========== Slideshow Control Handlers ==========
         
         private fun handleSlideshowStart(): Response {
-            mainHandler.post { onSlideshowStart?.invoke() }
+            mainHandler.post { 
+                // Start SlideshowActivity directly
+                SlideshowActivity.start(this@HttpServerService)
+            }
             return jsonResponse(mapOf(
                 "success" to true,
                 "message" to "Slideshow start triggered"
@@ -689,7 +762,11 @@ class HttpServerService : Service() {
         }
         
         private fun handleSlideshowExit(): Response {
-            mainHandler.post { onSlideshowExit?.invoke() }
+            mainHandler.post {
+                // Send broadcast to exit slideshow
+                val intent = Intent(SlideshowActivity.ACTION_EXIT_SLIDESHOW)
+                this@HttpServerService.sendBroadcast(intent)
+            }
             return jsonResponse(mapOf(
                 "success" to true,
                 "message" to "Slideshow exit triggered"

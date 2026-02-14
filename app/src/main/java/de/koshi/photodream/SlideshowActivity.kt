@@ -1,7 +1,10 @@
 package de.koshi.photodream
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
@@ -25,6 +28,7 @@ class SlideshowActivity : AppCompatActivity() {
     
     companion object {
         const val ACTION_START_SLIDESHOW = "de.koshi.photodream.START_SLIDESHOW"
+        const val ACTION_EXIT_SLIDESHOW = "de.koshi.photodream.EXIT_SLIDESHOW"
         
         fun start(context: Context) {
             val intent = Intent(context, SlideshowActivity::class.java).apply {
@@ -35,6 +39,14 @@ class SlideshowActivity : AppCompatActivity() {
     }
     
     private lateinit var controller: SlideshowController
+    
+    private val exitReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_EXIT_SLIDESHOW) {
+                finish()
+            }
+        }
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +71,14 @@ class SlideshowActivity : AppCompatActivity() {
         
         controller = SlideshowController(this, container) { finish() }
         controller.start()
+        
+        // Register broadcast receiver for remote exit
+        val filter = IntentFilter(ACTION_EXIT_SLIDESHOW)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(exitReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(exitReceiver, filter)
+        }
     }
     
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -69,6 +89,11 @@ class SlideshowActivity : AppCompatActivity() {
     }
     
     override fun onDestroy() {
+        try {
+            unregisterReceiver(exitReceiver)
+        } catch (e: Exception) {
+            // Receiver might not be registered
+        }
         if (::controller.isInitialized) {
             controller.stop()
         }
