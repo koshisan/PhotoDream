@@ -85,6 +85,95 @@
             style="@style/Widget.Material3.Button.TonalButton"
             android:text="▶ Start Slideshow Now" />
 
+        <!-- Brightness Control Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardBrightness"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            app:cardElevation="2dp"
+            app:cardCornerRadius="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔆 Brightness Control"
+                    android:textStyle="bold"
+                    android:textSize="16sp" />
+
+                <!-- Brightness Slider with Value Label -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-100"
+                        android:textSize="12sp"
+                        android:textColor="@android:color/darker_gray" />
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/sliderBrightness"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:valueFrom="-100"
+                        android:valueTo="100"
+                        android:stepSize="1"
+                        app:labelBehavior="gone" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="100"
+                        android:textSize="12sp"
+                        android:textColor="@android:color/darker_gray" />
+
+                </LinearLayout>
+
+                <!-- Brightness Value Display -->
+                <TextView
+                    android:id="@+id/txtBrightnessValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="Brightness: 50"
+                    android:textSize="14sp" />
+
+                <!-- Auto-Brightness Toggle -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAutoBrightness"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:text="Auto-Brightness: OFF" />
+
+                <!-- Permission Warning (shown if needed) -->
+                <TextView
+                    android:id="@+id/txtBrightnessPermission"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="⚠️ Tap to grant permissions"
+                    android:textColor="#FF9800"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Status Card -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardStatus"

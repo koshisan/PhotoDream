@@ -1,15 +1,21 @@
 package de.koshi.photodream
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
 import android.widget.TextView
 import de.koshi.photodream.model.AppSettings
 import de.koshi.photodream.server.HttpServerService
+import de.koshi.photodream.util.BrightnessManager
+import de.koshi.photodream.util.BrightnessOverlayService
 import de.koshi.photodream.util.ConfigManager
 import kotlinx.coroutines.*
 
@@ -32,8 +38,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtStatusTitle: TextView
     private lateinit var txtStatus: TextView
     
+    // Brightness control views
+    private lateinit var cardBrightness: MaterialCardView
+    private lateinit var sliderBrightness: Slider
+    private lateinit var txtBrightnessValue: TextView
+    private lateinit var btnAutoBrightness: MaterialButton
+    private lateinit var txtBrightnessPermission: TextView
+    
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pollingJob: Job? = null
+    
+    companion object {
+        private const val REQUEST_WRITE_SETTINGS = 1001
+        private const val REQUEST_OVERLAY_PERMISSION = 1002
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,11 +67,21 @@ class MainActivity : AppCompatActivity() {
         txtStatusTitle = findViewById(R.id.txtStatusTitle)
         txtStatus = findViewById(R.id.txtStatus)
         
+        // Find brightness control views
+        cardBrightness = findViewById(R.id.cardBrightness)
+        sliderBrightness = findViewById(R.id.sliderBrightness)
+        txtBrightnessValue = findViewById(R.id.txtBrightnessValue)
+        btnAutoBrightness = findViewById(R.id.btnAutoBrightness)
+        txtBrightnessPermission = findViewById(R.id.txtBrightnessPermission)
+        
         // Load existing settings
         loadSettings()
         
         // Start HTTP server as foreground service (runs permanently)
         startHttpServer()
+        
+        // Initialize brightness control
+        setupBrightnessControl()
         
         // Check if already configured
         checkExistingConfig()
@@ -61,6 +89,126 @@ class MainActivity : AppCompatActivity() {
         // Setup buttons
         btnRegister.setOnClickListener { registerWithHA() }
         btnStartSlideshow.setOnClickListener { SlideshowActivity.start(this) }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Refresh permission states
+        updateBrightnessPermissionUI()
+    }
+    
+    private fun setupBrightnessControl() {
+        // Initialize BrightnessManager
+        BrightnessManager.init(this)
+        
+        // Check and request permissions
+        checkBrightnessPermissions()
+        
+        // Set initial slider value
+        sliderBrightness.value = BrightnessManager.getBrightness().toFloat()
+        updateBrightnessValueText(BrightnessManager.getBrightness())
+        
+        // Slider change listener
+        sliderBrightness.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                val intValue = value.toInt()
+                updateBrightnessValueText(intValue)
+                
+                // Start overlay service if going negative
+                if (intValue < 0 && !BrightnessOverlayService.isRunning()) {
+                    if (Settings.canDrawOverlays(this)) {
+                        BrightnessOverlayService.start(this)
+                    }
+                }
+                
+                BrightnessManager.setBrightness(intValue, this)
+            }
+        }
+        
+        // Auto-brightness button
+        updateAutoBrightnessButton()
+        btnAutoBrightness.setOnClickListener {
+            val currentState = BrightnessManager.isAutoBrightnessEnabled(this)
+            BrightnessManager.setAutoBrightness(!currentState, this)
+            updateAutoBrightnessButton()
+        }
+        
+        // Permission warning click handler
+        txtBrightnessPermission.setOnClickListener {
+            requestBrightnessPermissions()
+        }
+    }
+    
+    private fun checkBrightnessPermissions() {
+        val hasWriteSettings = Settings.System.canWrite(this)
+        val hasOverlay = Settings.canDrawOverlays(this)
+        
+        if (!hasWriteSettings || !hasOverlay) {
+            txtBrightnessPermission.visibility = View.VISIBLE
+            txtBrightnessPermission.text = buildString {
+                append("⚠️ Permissions needed: ")
+                if (!hasWriteSettings) append("Write Settings ")
+                if (!hasOverlay) append("Overlay")
+                append("\nTap to grant")
+            }
+        } else {
+            txtBrightnessPermission.visibility = View.GONE
+            // Start overlay service if permissions granted
+            BrightnessOverlayService.start(this)
+        }
+    }
+    
+    private fun updateBrightnessPermissionUI() {
+        checkBrightnessPermissions()
+        updateAutoBrightnessButton()
+    }
+    
+    private fun requestBrightnessPermissions() {
+        val hasWriteSettings = Settings.System.canWrite(this)
+        val hasOverlay = Settings.canDrawOverlays(this)
+        
+        when {
+            !hasWriteSettings -> {
+                // Request WRITE_SETTINGS permission
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivityForResult(intent, REQUEST_WRITE_SETTINGS)
+            }
+            !hasOverlay -> {
+                // Request SYSTEM_ALERT_WINDOW permission
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION)
+            }
+        }
+    }
+    
+    private fun updateBrightnessValueText(value: Int) {
+        val label = when {
+            value < 0 -> "Brightness: $value (Overlay Dim)"
+            value == 0 -> "Brightness: 0 (Minimum)"
+            else -> "Brightness: $value"
+        }
+        txtBrightnessValue.text = label
+    }
+    
+    private fun updateAutoBrightnessButton() {
+        val hasSupport = BrightnessManager.hasAutoBrightnessSupport(this)
+        val hasPermission = BrightnessManager.hasWriteSettingsPermission(this)
+        
+        if (!hasSupport) {
+            btnAutoBrightness.isEnabled = false
+            btnAutoBrightness.text = "Auto-Brightness: Not Supported"
+        } else if (!hasPermission) {
+            btnAutoBrightness.isEnabled = false
+            btnAutoBrightness.text = "Auto-Brightness: No Permission"
+        } else {
+            btnAutoBrightness.isEnabled = true
+            val enabled = BrightnessManager.isAutoBrightnessEnabled(this)
+            btnAutoBrightness.text = if (enabled) "Auto-Brightness: ON" else "Auto-Brightness: OFF"
+        }
     }
     
     private fun startHttpServer() {
@@ -72,6 +220,28 @@ class MainActivity : AppCompatActivity() {
         pollingJob?.cancel()
         scope.cancel()
         super.onDestroy()
+    }
+    
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        
+        when (requestCode) {
+            REQUEST_WRITE_SETTINGS, REQUEST_OVERLAY_PERMISSION -> {
+                // Re-check permissions and update UI
+                updateBrightnessPermissionUI()
+                
+                // If we now have overlay permission, start the service
+                if (Settings.canDrawOverlays(this)) {
+                    BrightnessOverlayService.start(this)
+                }
+                
+                // If still missing permissions, request the next one
+                if (!Settings.System.canWrite(this) || !Settings.canDrawOverlays(this)) {
+                    requestBrightnessPermissions()
+                }
+            }
+        }
     }
     
     private fun loadSettings() {

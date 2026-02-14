@@ -17,6 +17,11 @@
     
     <!-- APK installation for OTA updates -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    
+    <!-- Brightness control -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" 
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -75,6 +80,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="HTTP server for Home Assistant smart home integration" />
         </service>
+        
+        <!-- Brightness Overlay Service (for sub-zero dimming) -->
+        <service
+            android:name=".util.BrightnessOverlayService"
+            android:exported="false" />
         
         <!-- FileProvider for APK installation -->
         <provider

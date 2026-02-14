@@ -20,6 +20,8 @@ import de.koshi.photodream.MainActivity
 import de.koshi.photodream.R
 import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
+import de.koshi.photodream.util.BrightnessManager
+import de.koshi.photodream.util.BrightnessOverlayService
 import de.koshi.photodream.util.ConfigManager
 
 /**
@@ -96,6 +98,10 @@ class HttpServerService : Service() {
     var getStatus: (() -> DeviceStatus)? = null
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
     var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
+    
+    // Slideshow control callbacks
+    var onSlideshowStart: (() -> Unit)? = null
+    var onSlideshowExit: (() -> Unit)? = null
     
     // Update state (persisted to SharedPreferences)
     var pendingUpdate: UpdateInfo? = null
@@ -294,6 +300,17 @@ class HttpServerService : Service() {
                     method == Method.POST && uri == "/next" -> handleNext()
                     method == Method.POST && uri == "/set-profile" -> handleSetProfile(session)
                     method == Method.POST && uri == "/prepare-update" -> handlePrepareUpdate(session)
+                    
+                    // Brightness control endpoints
+                    method == Method.GET && uri == "/brightness" -> handleGetBrightness()
+                    method == Method.POST && uri == "/brightness" -> handleSetBrightness(session)
+                    method == Method.GET && uri == "/auto-brightness" -> handleGetAutoBrightness()
+                    method == Method.POST && uri == "/auto-brightness" -> handleSetAutoBrightness(session)
+                    
+                    // Slideshow control endpoints
+                    method == Method.POST && uri == "/slideshow/start" -> handleSlideshowStart()
+                    method == Method.POST && uri == "/slideshow/exit" -> handleSlideshowExit()
+                    
                     else -> newFixedLengthResponse(
                         Response.Status.NOT_FOUND,
                         MIME_PLAINTEXT,
@@ -508,6 +525,11 @@ class HttpServerService : Service() {
                     "version" to it.version,
                     "apk_path" to it.apkPath
                 )},
+                "brightness" to mapOf(
+                    "value" to BrightnessManager.getBrightness(),
+                    "auto" to BrightnessManager.isAutoBrightnessEnabled(this@HttpServerService),
+                    "has_permission" to BrightnessManager.hasWriteSettingsPermission(this@HttpServerService)
+                ),
                 "last_received_config" to configObject
             ))
         }
@@ -575,6 +597,103 @@ class HttpServerService : Service() {
                     "Error fetching image: ${e.message}"
                 )
             }
+        }
+        
+        // ========== Brightness Control Handlers ==========
+        
+        private fun handleGetBrightness(): Response {
+            val brightness = BrightnessManager.getBrightness()
+            val hasPermission = BrightnessManager.hasWriteSettingsPermission(this@HttpServerService)
+            
+            return jsonResponse(mapOf(
+                "brightness" to brightness,
+                "has_permission" to hasPermission
+            ))
+        }
+        
+        private fun handleSetBrightness(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+            
+            val postData = body["postData"] ?: "{}"
+            val request = gson.fromJson(postData, Map::class.java)
+            val value = (request["value"] as? Number)?.toInt()
+            
+            if (value == null) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Missing 'value' field (expected -100 to 100)"
+                )
+            }
+            
+            // Execute on main thread (required for WindowManager)
+            mainHandler.post {
+                // Ensure overlay service is running for negative values
+                if (value < 0 && !BrightnessOverlayService.isRunning()) {
+                    BrightnessOverlayService.start(this@HttpServerService)
+                }
+                BrightnessManager.setBrightness(value, this@HttpServerService)
+            }
+            
+            return jsonResponse(mapOf(
+                "success" to true,
+                "brightness" to value.coerceIn(-100, 100)
+            ))
+        }
+        
+        private fun handleGetAutoBrightness(): Response {
+            val enabled = BrightnessManager.isAutoBrightnessEnabled(this@HttpServerService)
+            val supported = BrightnessManager.hasAutoBrightnessSupport(this@HttpServerService)
+            val hasPermission = BrightnessManager.hasWriteSettingsPermission(this@HttpServerService)
+            
+            return jsonResponse(mapOf(
+                "auto_brightness" to enabled,
+                "supported" to supported,
+                "has_permission" to hasPermission
+            ))
+        }
+        
+        private fun handleSetAutoBrightness(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+            
+            val postData = body["postData"] ?: "{}"
+            val request = gson.fromJson(postData, Map::class.java)
+            val enabled = request["enabled"] as? Boolean
+            
+            if (enabled == null) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Missing 'enabled' field (expected boolean)"
+                )
+            }
+            
+            val success = BrightnessManager.setAutoBrightness(enabled, this@HttpServerService)
+            
+            return jsonResponse(mapOf(
+                "success" to success,
+                "auto_brightness" to enabled
+            ))
+        }
+        
+        // ========== Slideshow Control Handlers ==========
+        
+        private fun handleSlideshowStart(): Response {
+            mainHandler.post { onSlideshowStart?.invoke() }
+            return jsonResponse(mapOf(
+                "success" to true,
+                "message" to "Slideshow start triggered"
+            ))
+        }
+        
+        private fun handleSlideshowExit(): Response {
+            mainHandler.post { onSlideshowExit?.invoke() }
+            return jsonResponse(mapOf(
+                "success" to true,
+                "message" to "Slideshow exit triggered"
+            ))
         }
         
         private fun jsonResponse(data: Any): Response {
