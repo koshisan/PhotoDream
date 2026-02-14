@@ -86,6 +86,7 @@ class SlideshowRenderer(
     
     /**
      * Show an image with optional crossfade transition and pan effect.
+     * Automatically chooses image quality based on display resolution.
      */
     fun showImage(
         asset: Asset,
@@ -93,7 +94,20 @@ class SlideshowRenderer(
         apiKey: String,
         withTransition: Boolean = true
     ) {
-        val url = asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
+        // Get display dimensions
+        val displayMetrics = context.resources.displayMetrics
+        val displayWidth = displayMetrics.widthPixels
+        val displayHeight = displayMetrics.heightPixels
+        val maxDimension = maxOf(displayWidth, displayHeight)
+        
+        // Choose quality based on display resolution
+        // PREVIEW = 1440px, so use original for anything larger
+        val url = if (maxDimension > 1440) {
+            Log.d(TAG, "High-res display ($maxDimension px), loading original image")
+            asset.getOriginalUrl(baseUrl)
+        } else {
+            asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
+        }
         
         val glideUrl = GlideUrl(
             url,
