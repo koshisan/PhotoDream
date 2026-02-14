@@ -51,9 +51,19 @@ object ConfigManager {
      * Save local app settings
      */
     fun saveSettings(context: Context, settings: AppSettings) {
+        // Save to file (for backward compatibility)
         val file = File(context.filesDir, SETTINGS_FILE)
         file.writeText(gson.toJson(settings))
-        Log.d(TAG, "Settings saved")
+        
+        // Also save to SharedPreferences (for AccessibilityService)
+        val prefs = context.getSharedPreferences("photodream_settings", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("ha_url", settings.haUrl)
+            .putString("device_id", settings.deviceId)
+            .putInt("server_port", settings.serverPort)
+            .apply()
+        
+        Log.d(TAG, "Settings saved to file and SharedPreferences")
     }
     
     /**

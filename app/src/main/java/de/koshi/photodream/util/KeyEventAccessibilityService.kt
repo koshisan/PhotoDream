@@ -52,19 +52,26 @@ class KeyEventAccessibilityService : AccessibilityService() {
     
     private fun loadSettings() {
         try {
-            val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-            val settingsJson = prefs.getString("settings", null)
-            if (settingsJson != null) {
-                // Try to read from the app's config file instead
-            }
+            // Use SharedPreferences with app's package context for cross-component access
+            val prefs = createPackageContext(packageName, 0)
+                .getSharedPreferences("photodream_settings", Context.MODE_PRIVATE)
             
-            // Read from ConfigManager's file
-            val file = java.io.File(filesDir, "app_settings.json")
-            if (file.exists()) {
-                val settings = gson.fromJson(file.readText(), AppSettings::class.java)
-                haUrl = settings.haUrl
-                deviceId = settings.deviceId
-                Log.i(TAG, "Loaded settings: haUrl=$haUrl, deviceId=$deviceId")
+            haUrl = prefs.getString("ha_url", null)
+            deviceId = prefs.getString("device_id", null)
+            
+            if (haUrl != null && deviceId != null) {
+                Log.i(TAG, "Loaded settings from SharedPreferences: haUrl=$haUrl, deviceId=$deviceId")
+            } else {
+                // Fallback: try reading from file
+                val file = java.io.File(filesDir, "app_settings.json")
+                if (file.exists()) {
+                    val settings = gson.fromJson(file.readText(), AppSettings::class.java)
+                    haUrl = settings.haUrl
+                    deviceId = settings.deviceId
+                    Log.i(TAG, "Loaded settings from file: haUrl=$haUrl, deviceId=$deviceId")
+                } else {
+                    Log.w(TAG, "No settings found! Key events will not be sent to HA.")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load settings: ${e.message}")
