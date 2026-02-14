@@ -122,6 +122,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 BrightnessManager.setBrightness(intValue, this)
+                
+                // Update auto-brightness button (manual change disables auto)
+                updateAutoBrightnessButton()
             }
         }
         
@@ -129,8 +132,16 @@ class MainActivity : AppCompatActivity() {
         updateAutoBrightnessButton()
         btnAutoBrightness.setOnClickListener {
             val currentState = BrightnessManager.isAutoBrightnessEnabled(this)
-            BrightnessManager.setAutoBrightness(!currentState, this)
+            val newState = !currentState
+            BrightnessManager.setAutoBrightness(newState, this)
             updateAutoBrightnessButton()
+            
+            // If enabling auto, reset slider to positive value and hide overlay
+            if (newState) {
+                val systemBrightness = BrightnessManager.getBrightness().coerceAtLeast(0)
+                sliderBrightness.value = systemBrightness.toFloat()
+                updateBrightnessValueText(systemBrightness)
+            }
         }
         
         // Permission warning click handler

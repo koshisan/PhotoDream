@@ -152,9 +152,17 @@ object BrightnessManager {
                 mode
             )
             
-            // If enabling auto, disable our overlay
+            // If enabling auto, disable our overlay and reset brightness tracking
             if (enabled) {
                 onOverlayAlphaChanged?.invoke(0f)
+                
+                // Read current system brightness and update our tracking
+                val systemBrightness = Settings.System.getInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    128
+                )
+                currentBrightness = (systemBrightness * 100 / 255).coerceIn(0, 100)
             }
             
             Log.i(TAG, "Auto-brightness set to $enabled")
