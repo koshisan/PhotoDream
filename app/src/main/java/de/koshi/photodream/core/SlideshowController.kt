@@ -78,6 +78,11 @@ class SlideshowController(
     private var playlist: List<Asset> = emptyList()
     private var currentIndex = 0
     
+    // Pagination state (survives slideshow restarts, but not HTTP server restarts)
+    private var currentPage = 1
+    private var hasMorePages = false
+    private var displayMode = "smart_shuffle"
+    
     // Coroutines & handlers
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -605,16 +610,28 @@ class SlideshowController(
         }
     }
     
-    private suspend fun loadPlaylist(profile: ProfileConfig) {
+    private suspend fun loadPlaylist(profile: ProfileConfig, resetPage: Boolean = true) {
         withContext(Dispatchers.IO) {
             val client = immichClient ?: return@withContext
-            val displayMode = config?.display?.mode ?: "smart_shuffle"
+            displayMode = config?.display?.mode ?: "smart_shuffle"
+            
+            // Reset page for new playlist loads (profile change, etc.)
+            // Keep page for sequential mode continuation
+            if (resetPage) {
+                currentPage = 1
+            }
             
             // Load assets based on display mode
-            // - sequential: fixed order from smart search
+            // - sequential: fixed order from smart search (paginated)
             // - random: random selection each time  
             // - smart_shuffle: 50/50 mix of random + recent (last 30 days)
-            val allAssets = client.loadPlaylist(profile.searchFilter, displayMode, limit = 500)
+            val (allAssets, hasMore) = client.loadPlaylist(
+                profile.searchFilter, 
+                displayMode, 
+                limit = 500, 
+                page = currentPage
+            )
+            hasMorePages = hasMore
             
             // Apply exclude paths filter
             val filtered = allAssets.filter { asset ->
@@ -627,7 +644,44 @@ class SlideshowController(
             playlist = filtered
             currentIndex = 0
             
-            Log.i(TAG, "Loaded playlist with ${playlist.size} images (mode: $displayMode, filter: ${profile.searchFilter})")
+            Log.i(TAG, "Loaded playlist with ${playlist.size} images (mode: $displayMode, page: $currentPage, hasMore: $hasMorePages)")
+        }
+    }
+    
+    /**
+     * Load next batch of images when reaching end of playlist
+     */
+    private fun loadNextBatch() {
+        val profile = config?.profile ?: return
+        
+        scope.launch {
+            when (displayMode) {
+                "sequential" -> {
+                    if (hasMorePages) {
+                        // Load next page
+                        currentPage++
+                        Log.i(TAG, "Sequential: loading next page $currentPage")
+                    } else {
+                        // No more pages, restart from beginning
+                        currentPage = 1
+                        Log.i(TAG, "Sequential: no more pages, restarting from page 1")
+                    }
+                    loadPlaylist(profile, resetPage = false)
+                }
+                "random", "smart_shuffle" -> {
+                    // Load fresh random batch
+                    Log.i(TAG, "$displayMode: loading fresh random batch")
+                    loadPlaylist(profile, resetPage = true)
+                }
+                else -> {
+                    loadPlaylist(profile, resetPage = true)
+                }
+            }
+            
+            // Continue slideshow if we got images
+            if (playlist.isNotEmpty()) {
+                handler.post { showCurrentImage(withTransition = true) }
+            }
         }
     }
     
@@ -666,7 +720,16 @@ class SlideshowController(
     
     private fun showNextImage() {
         if (playlist.isEmpty()) return
-        currentIndex = (currentIndex + 1) % playlist.size
+        
+        val nextIndex = currentIndex + 1
+        if (nextIndex >= playlist.size) {
+            // End of playlist - load next batch
+            Log.i(TAG, "Reached end of playlist, loading next batch")
+            loadNextBatch()
+            return
+        }
+        
+        currentIndex = nextIndex
         showCurrentImage()
         // Refresh info panel if visible
         if (isInfoPanelVisible) {

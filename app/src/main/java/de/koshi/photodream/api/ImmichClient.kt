@@ -68,94 +68,68 @@ class ImmichClient(private val config: ImmichConfig) {
      * @param filter Search filter from profile config
      * @param mode Display mode: "sequential", "random", or "smart_shuffle"
      * @param limit Total number of images to load
+     * @param page Page number for sequential mode (1-based)
+     * @return Pair of (assets, hasMorePages) for sequential mode, or (assets, false) for random modes
      */
-    suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500): List<Asset> {
-        Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, filter=$filter")
+    suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500, page: Int = 1): Pair<List<Asset>, Boolean> {
+        Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, page=$page, filter=$filter")
         
         return when (mode) {
-            "sequential" -> loadSequential(filter, limit)
-            "random" -> loadRandom(filter, limit)
-            "smart_shuffle" -> loadSmartShuffle(filter, limit)
+            "sequential" -> loadSequentialPage(filter, page, limit)
+            "random" -> Pair(loadRandom(filter, limit), false)
+            "smart_shuffle" -> Pair(loadSmartShuffle(filter, limit), false)
             else -> {
                 Log.w(TAG, "Unknown display mode '$mode', defaulting to smart_shuffle")
-                loadSmartShuffle(filter, limit)
+                Pair(loadSmartShuffle(filter, limit), false)
             }
         }
     }
     
     /**
-     * Sequential mode: Chronological order (oldest to newest)
-     * Fetches ALL matching images via pagination, then sorts by date.
-     * 
-     * Note: Can be slow for large result sets. Set appropriate filters
-     * to keep the number of matching images reasonable.
+     * Sequential mode with pagination: Load a single page of chronologically sorted images
+     * @return Pair of (assets, hasMorePages)
      */
-    private suspend fun loadSequential(filter: SearchFilter?, limit: Int): List<Asset> {
-        val allAssets = fetchAllWithPagination(filter)
-        
-        // Sort chronologically (oldest first)
-        val sorted = allAssets.sortedBy { asset ->
-            asset.fileCreatedAt ?: asset.localDateTime ?: ""
-        }
-        
-        Log.i(TAG, "Sequential: fetched ${allAssets.size} total, sorted chronologically")
-        return sorted
-    }
-    
-    /**
-     * Fetch ALL matching assets using pagination
-     */
-    private suspend fun fetchAllWithPagination(filter: SearchFilter?, pageSize: Int = 500): List<Asset> {
+    private suspend fun loadSequentialPage(filter: SearchFilter?, page: Int, pageSize: Int): Pair<List<Asset>, Boolean> {
         if (!hasFilter(filter)) {
-            Log.i(TAG, "No filter for sequential - fetching via timeline would be better, using random fallback")
-            return searchWithRandomApi(null, 500)
+            Log.i(TAG, "No filter for sequential - using random fallback")
+            return Pair(searchWithRandomApi(null, pageSize), false)
         }
         
-        val allAssets = mutableListOf<Asset>()
-        var page = 1
-        var hasMore = true
+        val request = SmartSearchRequest(
+            query = filter!!.query,
+            page = page,
+            size = pageSize,
+            type = filter.type ?: "IMAGE",
+            personIds = filter.personIds,
+            tagIds = filter.tagIds,
+            albumId = filter.albumId,
+            city = filter.city,
+            country = filter.country,
+            state = filter.state,
+            takenAfter = filter.takenAfter,
+            takenBefore = filter.takenBefore,
+            isArchived = filter.isArchived,
+            isFavorite = filter.isFavorite
+        )
         
-        while (hasMore) {
-            val request = SmartSearchRequest(
-                query = filter!!.query,
-                page = page,
-                size = pageSize,
-                type = filter.type ?: "IMAGE",
-                personIds = filter.personIds,
-                tagIds = filter.tagIds,
-                albumId = filter.albumId,
-                city = filter.city,
-                country = filter.country,
-                state = filter.state,
-                takenAfter = filter.takenAfter,
-                takenBefore = filter.takenBefore,
-                isArchived = filter.isArchived,
-                isFavorite = filter.isFavorite
-            )
+        return try {
+            val response = api.smartSearch(request)
+            val items = response.assets.items
             
-            try {
-                val response = api.smartSearch(request)
-                val items = response.assets.items
-                allAssets.addAll(items)
-                
-                Log.d(TAG, "Pagination: page $page, got ${items.size}, total so far: ${allAssets.size}/${response.assets.total}")
-                
-                // Check if there are more pages
-                hasMore = allAssets.size < response.assets.total && items.isNotEmpty()
-                page++
-                
-                // Safety limit to prevent infinite loops
-                if (page > 100) {
-                    Log.w(TAG, "Pagination safety limit reached (100 pages)")
-                    break
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Pagination failed at page $page: ${e.message}", e)
-                break
+            // Sort chronologically (oldest first)
+            val sorted = items.sortedBy { asset ->
+                asset.fileCreatedAt ?: asset.localDateTime ?: ""
             }
+            
+            val totalFetched = (page - 1) * pageSize + items.size
+            val hasMore = totalFetched < response.assets.total && items.isNotEmpty()
+            
+            Log.i(TAG, "Sequential page $page: got ${items.size}, total available: ${response.assets.total}, hasMore: $hasMore")
+            Pair(sorted, hasMore)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load sequential page $page: ${e.message}", e)
+            Pair(emptyList(), false)
         }
-        
-        return allAssets.distinctBy { it.id }  // Deduplicate just in case
     }
     
     /**
