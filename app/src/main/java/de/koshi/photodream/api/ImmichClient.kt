@@ -286,7 +286,8 @@ class ImmichClient(private val config: ImmichConfig) {
      */
     @Deprecated("Use loadPlaylist instead", ReplaceWith("loadPlaylist(filter, mode, limit)"))
     suspend fun searchWithFilter(filter: SearchFilter?, limit: Int = 200): List<Asset> {
-        return loadPlaylist(filter, "smart_shuffle", limit)
+        val (assets, _) = loadPlaylist(filter, "smart_shuffle", limit)
+        return assets
     }
     
     /**
