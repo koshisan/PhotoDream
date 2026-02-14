@@ -43,7 +43,8 @@ class SlideshowActivity : AppCompatActivity() {
     private val exitReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_EXIT_SLIDESHOW) {
-                finish()
+                // Move to background instead of finishing to MainActivity
+                moveTaskToBack(true)
             }
         }
     }
