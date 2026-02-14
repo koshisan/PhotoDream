@@ -706,9 +706,12 @@ class HttpServerService : Service() {
                 BrightnessManager.setBrightness(value, this@HttpServerService)
             }
             
+            // Return both brightness and auto_brightness state
+            // (manual brightness change disables auto)
             return jsonResponse(mapOf(
                 "success" to true,
-                "brightness" to value.coerceIn(-100, 100)
+                "brightness" to value.coerceIn(-100, 100),
+                "auto_brightness" to false  // Manual change always disables auto
             ))
         }
         
