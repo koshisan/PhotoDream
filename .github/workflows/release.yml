@@ -26,8 +26,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
       
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/photodream-release.keystore
+      
       - name: Build Release APK
         run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/photodream-release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       
       - name: Build Debug APK
         run: ./gradlew assembleDebug
@@ -38,7 +47,7 @@ jobs:
       
       - name: Rename APKs
         run: |
-          mv app/build/outputs/apk/release/app-release-unsigned.apk photodream-${{ steps.version.outputs.VERSION }}-release.apk || true
+          mv app/build/outputs/apk/release/app-release.apk photodream-${{ steps.version.outputs.VERSION }}-release.apk || true
           mv app/build/outputs/apk/debug/app-debug.apk photodream-${{ steps.version.outputs.VERSION }}-debug.apk || true
       
       - name: Upload APK to Release
