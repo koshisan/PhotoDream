@@ -149,7 +149,11 @@ class SlideshowRenderer(
                         if (withTransition) {
                             crossfadeToBackView {
                                 if (panEnabled) {
-                                    startSmartPanAnimation(frontView, resource)
+                                    frontView.post {
+                                        frontView.drawable?.let {
+                                            startSmartPanAnimation(frontView, it)
+                                        }
+                                    }
                                 }
                                 onImageShown?.invoke(asset)
                             }
@@ -159,7 +163,11 @@ class SlideshowRenderer(
                             frontView.alpha = 1f
                             backView.alpha = 0f
                             if (panEnabled) {
-                                startSmartPanAnimation(frontView, resource)
+                                frontView.post {
+                                    frontView.drawable?.let {
+                                        startSmartPanAnimation(frontView, it)
+                                    }
+                                }
                             }
                             onImageShown?.invoke(asset)
                         }
