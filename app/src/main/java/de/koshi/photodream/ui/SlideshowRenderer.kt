@@ -79,7 +79,7 @@ class SlideshowRenderer(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            scaleType = ImageView.ScaleType.MATRIX // We'll handle scaling ourselves for pan
+            scaleType = ImageView.ScaleType.CENTER_CROP // Always fullscreen, crop if needed
             adjustViewBounds = false
         }
     }
@@ -143,11 +143,13 @@ class SlideshowRenderer(
                 ): Boolean {
                     // Image loaded, now do transition
                     backView.post {
-                        setupImageMatrix(backView, resource)
+                        // For now: use CENTER_CROP for reliable fullscreen display
+                        // setupImageMatrix(backView, resource) // Disabled - issues with rotated displays
+                        backView.scaleType = ImageView.ScaleType.CENTER_CROP
                         
                         if (withTransition) {
                             crossfadeToBackView {
-                                startPanAnimation(frontView)
+                                // startPanAnimation(frontView) // Disabled with CENTER_CROP
                                 onImageShown?.invoke(asset)
                             }
                         } else {
@@ -155,7 +157,7 @@ class SlideshowRenderer(
                             swapViews()
                             frontView.alpha = 1f
                             backView.alpha = 0f
-                            startPanAnimation(frontView)
+                            // startPanAnimation(frontView) // Disabled with CENTER_CROP
                             onImageShown?.invoke(asset)
                         }
                     }
@@ -175,8 +177,11 @@ class SlideshowRenderer(
         val drawableWidth = drawable.intrinsicWidth.toFloat()
         val drawableHeight = drawable.intrinsicHeight.toFloat()
         
+        Log.d(TAG, "setupImageMatrix: view=${viewWidth}x${viewHeight} drawable=${drawableWidth}x${drawableHeight}")
+        
         if (viewWidth == 0f || viewHeight == 0f || drawableWidth == 0f || drawableHeight == 0f) {
             // Fallback to center crop
+            Log.w(TAG, "Invalid dimensions, using CENTER_CROP")
             imageView.scaleType = ImageView.ScaleType.CENTER_CROP
             return
         }

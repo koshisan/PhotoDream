@@ -49,7 +49,7 @@
             android:name=".SlideshowActivity"
             android:exported="true"
             android:theme="@style/Theme.PhotoDream.Fullscreen"
-            android:screenOrientation="landscape"
+            android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="de.koshi.photodream.START_SLIDESHOW" />
