@@ -146,14 +146,18 @@ class SlideshowRenderer(
                         // Use CENTER_CROP for reliable fullscreen display
                         backView.scaleType = ImageView.ScaleType.CENTER_CROP
                         
+                        // Capture drawable before any view swapping
+                        val loadedDrawable = resource
+                        
                         if (withTransition) {
                             crossfadeToBackView {
                                 if (panEnabled) {
+                                    Log.d(TAG, "Pan enabled, starting smart pan on frontView")
                                     frontView.post {
-                                        frontView.drawable?.let {
-                                            startSmartPanAnimation(frontView, it)
-                                        }
+                                        startSmartPanAnimation(frontView, loadedDrawable)
                                     }
+                                } else {
+                                    Log.d(TAG, "Pan disabled, skipping")
                                 }
                                 onImageShown?.invoke(asset)
                             }
@@ -163,10 +167,9 @@ class SlideshowRenderer(
                             frontView.alpha = 1f
                             backView.alpha = 0f
                             if (panEnabled) {
+                                Log.d(TAG, "Pan enabled (no transition), starting smart pan")
                                 frontView.post {
-                                    frontView.drawable?.let {
-                                        startSmartPanAnimation(frontView, it)
-                                    }
+                                    startSmartPanAnimation(frontView, loadedDrawable)
                                 }
                             }
                             onImageShown?.invoke(asset)
