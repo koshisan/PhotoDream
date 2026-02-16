@@ -79,7 +79,7 @@ class SlideshowRenderer(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            scaleType = ImageView.ScaleType.CENTER_CROP // Always fullscreen, crop if needed
+            scaleType = ImageView.ScaleType.MATRIX // We'll handle scaling ourselves for pan
             adjustViewBounds = false
         }
     }
@@ -143,22 +143,11 @@ class SlideshowRenderer(
                 ): Boolean {
                     // Image loaded, now do transition
                     backView.post {
-                        // Use CENTER_CROP for reliable fullscreen display
-                        backView.scaleType = ImageView.ScaleType.CENTER_CROP
-                        
-                        // Capture drawable before any view swapping
-                        val loadedDrawable = resource
+                        setupImageMatrix(backView, resource)
                         
                         if (withTransition) {
                             crossfadeToBackView {
-                                if (panEnabled) {
-                                    Log.d(TAG, "Pan enabled, starting smart pan on frontView")
-                                    frontView.post {
-                                        startSmartPanAnimation(frontView, loadedDrawable)
-                                    }
-                                } else {
-                                    Log.d(TAG, "Pan disabled, skipping")
-                                }
+                                startPanAnimation(frontView)
                                 onImageShown?.invoke(asset)
                             }
                         } else {
@@ -166,12 +155,7 @@ class SlideshowRenderer(
                             swapViews()
                             frontView.alpha = 1f
                             backView.alpha = 0f
-                            if (panEnabled) {
-                                Log.d(TAG, "Pan enabled (no transition), starting smart pan")
-                                frontView.post {
-                                    startSmartPanAnimation(frontView, loadedDrawable)
-                                }
-                            }
+                            startPanAnimation(frontView)
                             onImageShown?.invoke(asset)
                         }
                     }
@@ -191,11 +175,13 @@ class SlideshowRenderer(
         val drawableWidth = drawable.intrinsicWidth.toFloat()
         val drawableHeight = drawable.intrinsicHeight.toFloat()
         
-        Log.d(TAG, "setupImageMatrix: view=${viewWidth}x${viewHeight} drawable=${drawableWidth}x${drawableHeight}")
+        Log.d(TAG, "=== setupImageMatrix DEBUG ===")
+        Log.d(TAG, "View dimensions: ${viewWidth}x${viewHeight}")
+        Log.d(TAG, "Drawable dimensions: ${drawableWidth}x${drawableHeight}")
         
         if (viewWidth == 0f || viewHeight == 0f || drawableWidth == 0f || drawableHeight == 0f) {
             // Fallback to center crop
-            Log.w(TAG, "Invalid dimensions, using CENTER_CROP")
+            Log.w(TAG, "FALLBACK to CENTER_CROP - zero dimensions detected!")
             imageView.scaleType = ImageView.ScaleType.CENTER_CROP
             return
         }
@@ -208,9 +194,14 @@ class SlideshowRenderer(
         val scaledWidth = drawableWidth * scale
         val scaledHeight = drawableHeight * scale
         
+        Log.d(TAG, "Scale factors: scaleX=$scaleX, scaleY=$scaleY, chosen=$scale")
+        Log.d(TAG, "Scaled image: ${scaledWidth}x${scaledHeight}")
+        
         // Center the image
         val translateX = (viewWidth - scaledWidth) / 2f
         val translateY = (viewHeight - scaledHeight) / 2f
+        
+        Log.d(TAG, "Translation: x=$translateX, y=$translateY")
         
         val matrix = Matrix()
         matrix.setScale(scale, scale)
@@ -220,13 +211,18 @@ class SlideshowRenderer(
         imageView.imageMatrix = matrix
         
         // Store pan bounds as tag for animation
-        imageView.setTag(R.id.pan_bounds, PanBounds(
+        val panBounds = PanBounds(
             minX = viewWidth - scaledWidth,
             maxX = 0f,
             minY = viewHeight - scaledHeight,
             maxY = 0f,
             scale = scale
-        ))
+        )
+        imageView.setTag(R.id.pan_bounds, panBounds)
+        
+        Log.d(TAG, "PanBounds: minX=${panBounds.minX}, minY=${panBounds.minY}")
+        Log.d(TAG, "Overflow: horizontal=${panBounds.minX < 0}, vertical=${panBounds.minY < 0}")
+        Log.d(TAG, "=== setupImageMatrix DONE ===")
     }
     
     /**
@@ -265,111 +261,35 @@ class SlideshowRenderer(
     }
     
     /**
-     * Smart pan animation based on image vs display aspect ratio.
-     * Pans horizontally for landscape images on portrait displays (and vice versa).
-     */
-    private fun startSmartPanAnimation(imageView: ImageView, drawable: Drawable) {
-        val viewWidth = imageView.width.toFloat()
-        val viewHeight = imageView.height.toFloat()
-        val imageWidth = drawable.intrinsicWidth.toFloat()
-        val imageHeight = drawable.intrinsicHeight.toFloat()
-        
-        if (viewWidth == 0f || viewHeight == 0f || imageWidth == 0f || imageHeight == 0f) {
-            return
-        }
-        
-        // Calculate aspect ratios
-        val viewAspect = viewWidth / viewHeight
-        val imageAspect = imageWidth / imageHeight
-        
-        // CENTER_CROP scales to cover, so one dimension will overflow
-        val scale = maxOf(viewWidth / imageWidth, viewHeight / imageHeight)
-        val scaledWidth = imageWidth * scale
-        val scaledHeight = imageHeight * scale
-        
-        // Determine which dimension overflows
-        val horizontalOverflow = scaledWidth > viewWidth
-        val verticalOverflow = scaledHeight > viewHeight
-        
-        if (!horizontalOverflow && !verticalOverflow) {
-            // Image fits exactly, no pan needed
-            return
-        }
-        
-        currentPanAnimator?.cancel()
-        
-        // Reset transforms
-        imageView.scaleX = 1f
-        imageView.scaleY = 1f
-        imageView.translationX = 0f
-        imageView.translationY = 0f
-        
-        // Calculate max pan distance (how much we can move)
-        val maxPanX = if (horizontalOverflow) (scaledWidth - viewWidth) / 2f else 0f
-        val maxPanY = if (verticalOverflow) (scaledHeight - viewHeight) / 2f else 0f
-        
-        // Choose random start position
-        val random = java.util.Random()
-        val startX = if (horizontalOverflow) (if (random.nextBoolean()) -maxPanX else maxPanX) else 0f
-        val startY = if (verticalOverflow) (if (random.nextBoolean()) -maxPanY else maxPanY) else 0f
-        
-        // Animate to opposite position
-        val targetX = -startX
-        val targetY = -startY
-        
-        imageView.translationX = startX
-        imageView.translationY = startY
-        
-        val animatorX = if (horizontalOverflow) {
-            ObjectAnimator.ofFloat(imageView, View.TRANSLATION_X, startX, targetX)
-        } else null
-        
-        val animatorY = if (verticalOverflow) {
-            ObjectAnimator.ofFloat(imageView, View.TRANSLATION_Y, startY, targetY)
-        } else null
-        
-        val animators = listOfNotNull(animatorX, animatorY)
-        if (animators.isEmpty()) return
-        
-        val animatorSet = AnimatorSet().apply {
-            playTogether(animators)
-            duration = panDuration
-            interpolator = LinearInterpolator()
-            
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    // Reverse and repeat
-                    if (currentPanAnimator == this@apply) {
-                        imageView.translationX = targetX
-                        imageView.translationY = targetY
-                        startSmartPanAnimation(imageView, drawable)
-                    }
-                }
-            })
-        }
-        
-        currentPanAnimator = animatorSet
-        animatorSet.start()
-        
-        Log.d(TAG, "Smart pan: view=${viewWidth}x${viewHeight} image=${imageWidth}x${imageHeight} " +
-                "overflow=H:$horizontalOverflow V:$verticalOverflow pan=${startX},${startY}→${targetX},${targetY}")
-    }
-    
-    /**
-     * Start a slow pan animation on the image (old matrix-based version - deprecated).
+     * Start a slow pan animation on the image.
      * Pans from one edge to another based on which dimension overflows.
      */
     private fun startPanAnimation(imageView: ImageView) {
-        if (!panEnabled) return
+        Log.d(TAG, "=== startPanAnimation DEBUG ===")
+        Log.d(TAG, "panEnabled=$panEnabled")
         
-        val bounds = imageView.getTag(R.id.pan_bounds) as? PanBounds ?: return
+        if (!panEnabled) {
+            Log.d(TAG, "Pan DISABLED - returning")
+            return
+        }
+        
+        val bounds = imageView.getTag(R.id.pan_bounds) as? PanBounds
+        if (bounds == null) {
+            Log.w(TAG, "No PanBounds found on ImageView - returning")
+            return
+        }
+        
+        Log.d(TAG, "PanBounds: minX=${bounds.minX}, minY=${bounds.minY}")
         
         // Determine pan direction based on overflow
         val horizontalOverflow = bounds.minX < 0
         val verticalOverflow = bounds.minY < 0
         
+        Log.d(TAG, "Overflow: horizontal=$horizontalOverflow, vertical=$verticalOverflow")
+        
         if (!horizontalOverflow && !verticalOverflow) {
             // Image fits perfectly, no pan needed
+            Log.d(TAG, "No overflow - no pan needed")
             return
         }
         
@@ -421,6 +341,9 @@ class SlideshowRenderer(
         
         currentPanAnimator = animator
         animator.start()
+        
+        Log.d(TAG, "Pan animation STARTED: from ($startX,$startY) to ($targetX,$targetY), duration=${panDuration}ms")
+        Log.d(TAG, "=== startPanAnimation DONE ===")
     }
     
     /**
