@@ -175,13 +175,8 @@ class SlideshowRenderer(
         val drawableWidth = drawable.intrinsicWidth.toFloat()
         val drawableHeight = drawable.intrinsicHeight.toFloat()
         
-        Log.d(TAG, "=== setupImageMatrix DEBUG ===")
-        Log.d(TAG, "View dimensions: ${viewWidth}x${viewHeight}")
-        Log.d(TAG, "Drawable dimensions: ${drawableWidth}x${drawableHeight}")
-        
         if (viewWidth == 0f || viewHeight == 0f || drawableWidth == 0f || drawableHeight == 0f) {
             // Fallback to center crop
-            Log.w(TAG, "FALLBACK to CENTER_CROP - zero dimensions detected!")
             imageView.scaleType = ImageView.ScaleType.CENTER_CROP
             return
         }
@@ -194,14 +189,9 @@ class SlideshowRenderer(
         val scaledWidth = drawableWidth * scale
         val scaledHeight = drawableHeight * scale
         
-        Log.d(TAG, "Scale factors: scaleX=$scaleX, scaleY=$scaleY, chosen=$scale")
-        Log.d(TAG, "Scaled image: ${scaledWidth}x${scaledHeight}")
-        
         // Center the image
         val translateX = (viewWidth - scaledWidth) / 2f
         val translateY = (viewHeight - scaledHeight) / 2f
-        
-        Log.d(TAG, "Translation: x=$translateX, y=$translateY")
         
         val matrix = Matrix()
         matrix.setScale(scale, scale)
@@ -211,18 +201,13 @@ class SlideshowRenderer(
         imageView.imageMatrix = matrix
         
         // Store pan bounds as tag for animation
-        val panBounds = PanBounds(
+        imageView.setTag(R.id.pan_bounds, PanBounds(
             minX = viewWidth - scaledWidth,
             maxX = 0f,
             minY = viewHeight - scaledHeight,
             maxY = 0f,
             scale = scale
-        )
-        imageView.setTag(R.id.pan_bounds, panBounds)
-        
-        Log.d(TAG, "PanBounds: minX=${panBounds.minX}, minY=${panBounds.minY}")
-        Log.d(TAG, "Overflow: horizontal=${panBounds.minX < 0}, vertical=${panBounds.minY < 0}")
-        Log.d(TAG, "=== setupImageMatrix DONE ===")
+        ))
     }
     
     /**
@@ -265,31 +250,16 @@ class SlideshowRenderer(
      * Pans from one edge to another based on which dimension overflows.
      */
     private fun startPanAnimation(imageView: ImageView) {
-        Log.d(TAG, "=== startPanAnimation DEBUG ===")
-        Log.d(TAG, "panEnabled=$panEnabled")
+        if (!panEnabled) return
         
-        if (!panEnabled) {
-            Log.d(TAG, "Pan DISABLED - returning")
-            return
-        }
-        
-        val bounds = imageView.getTag(R.id.pan_bounds) as? PanBounds
-        if (bounds == null) {
-            Log.w(TAG, "No PanBounds found on ImageView - returning")
-            return
-        }
-        
-        Log.d(TAG, "PanBounds: minX=${bounds.minX}, minY=${bounds.minY}")
+        val bounds = imageView.getTag(R.id.pan_bounds) as? PanBounds ?: return
         
         // Determine pan direction based on overflow
         val horizontalOverflow = bounds.minX < 0
         val verticalOverflow = bounds.minY < 0
         
-        Log.d(TAG, "Overflow: horizontal=$horizontalOverflow, vertical=$verticalOverflow")
-        
         if (!horizontalOverflow && !verticalOverflow) {
             // Image fits perfectly, no pan needed
-            Log.d(TAG, "No overflow - no pan needed")
             return
         }
         
@@ -341,9 +311,6 @@ class SlideshowRenderer(
         
         currentPanAnimator = animator
         animator.start()
-        
-        Log.d(TAG, "Pan animation STARTED: from ($startX,$startY) to ($targetX,$targetY), duration=${panDuration}ms")
-        Log.d(TAG, "=== startPanAnimation DONE ===")
     }
     
     /**
