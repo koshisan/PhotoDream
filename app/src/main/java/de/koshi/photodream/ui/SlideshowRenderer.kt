@@ -232,7 +232,12 @@ class SlideshowRenderer(
      */
     private fun crossfadeToBackView(onComplete: () -> Unit) {
         currentTransitionAnimator?.cancel()
-        
+
+        // Explicitly set alpha to expected start values so any interrupted
+        // prior transition doesn't leave them in a half-animated state.
+        frontView.alpha = 1f
+        backView.alpha = 0f
+
         val fadeOut = ObjectAnimator.ofFloat(frontView, View.ALPHA, 1f, 0f)
         val fadeIn = ObjectAnimator.ofFloat(backView, View.ALPHA, 0f, 1f)
         
@@ -242,9 +247,18 @@ class SlideshowRenderer(
             interpolator = AccelerateDecelerateInterpolator()
             
             addListener(object : AnimatorListenerAdapter() {
+                private var canceled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    canceled = true
+                    // Restore clean state so next crossfade starts correctly
+                    frontView.alpha = 1f
+                    backView.alpha = 0f
+                }
                 override fun onAnimationEnd(animation: Animator) {
-                    swapViews()
-                    onComplete()
+                    if (!canceled) {
+                        swapViews()
+                        onComplete()
+                    }
                 }
             })
         }
