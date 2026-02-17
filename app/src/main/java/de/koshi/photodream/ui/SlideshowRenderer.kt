@@ -14,6 +14,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.core.view.doOnLayout
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.engine.GlideException
@@ -141,10 +142,17 @@ class SlideshowRenderer(
                     dataSource: DataSource,
                     isFirstResource: Boolean
                 ): Boolean {
-                    // Image loaded, now do transition
-                    backView.post {
+                    // Set drawable immediately so it uses the correct MATRIX scaleType.
+                    // Returning false lets Glide set it *after* this callback returns, which
+                    // can race with our backView.post{} and result in the image being placed
+                    // via an identity matrix (top-left, original size) before we get to
+                    // setupImageMatrix(). That causes a black flash on portrait displays
+                    // where the view is not yet measured.
+                    backView.setImageDrawable(resource)
+
+                    fun doTransition() {
                         setupImageMatrix(backView, resource)
-                        
+
                         if (withTransition) {
                             crossfadeToBackView {
                                 startPanAnimation(frontView)
@@ -159,7 +167,16 @@ class SlideshowRenderer(
                             onImageShown?.invoke(asset)
                         }
                     }
-                    return false
+
+                    // If the view is already laid out we can act on the next frame;
+                    // otherwise wait for layout so setupImageMatrix() gets real dimensions.
+                    if (backView.width > 0 && backView.height > 0) {
+                        backView.post { doTransition() }
+                    } else {
+                        backView.doOnLayout { doTransition() }
+                    }
+
+                    return true // We set the drawable ourselves above
                 }
             })
             .into(backView)
