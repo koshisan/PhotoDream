@@ -196,35 +196,45 @@ class HttpServerService : Service() {
         super.onCreate()
         Log.d(TAG, "HttpServerService created")
         createNotificationChannel()
-    }
-    
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        serverPort = intent?.getIntExtra("port", DEFAULT_PORT) ?: DEFAULT_PORT
-        
-        // Start as foreground service with special use type
+
+        // Load port from saved settings (works even when started via binding only, e.g. Daydream)
+        serverPort = ConfigManager.getSettings(this).serverPort
+
+        // Promote to foreground immediately so the service survives even when bound-only
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, createNotification(), 
+            startForeground(NOTIFICATION_ID, createNotification(),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }
-        
+
         // Start HTTP server
         startServer(serverPort)
-        
+
         // Load cached config if available
         val cachedConfig = ConfigManager.loadCachedConfig(this)
         if (cachedConfig != null) {
             currentConfig = cachedConfig
             Log.i(TAG, "Loaded cached config for device: ${cachedConfig.deviceId}")
         }
-        
+
         // Load pending update from SharedPreferences (survives app restart)
         pendingUpdate = loadPendingUpdate()
-        
+
         // Initialize device info in status
         updateDeviceInfo()
-        
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val requestedPort = intent?.getIntExtra("port", DEFAULT_PORT) ?: DEFAULT_PORT
+
+        // Restart server only if MainActivity requests a different port
+        if (requestedPort != serverPort) {
+            Log.d(TAG, "Port changed from $serverPort to $requestedPort, restarting server")
+            serverPort = requestedPort
+            startServer(serverPort)
+        }
+
         // Return sticky so system restarts service if killed
         return START_STICKY
     }
