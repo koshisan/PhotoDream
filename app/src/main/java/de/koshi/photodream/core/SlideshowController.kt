@@ -384,6 +384,10 @@ class SlideshowController(
     }
     
     private fun bindHttpService() {
+        // Start the service explicitly so it persists as a started service even after Daydream ends.
+        // Without this, the service is only bound (BIND_AUTO_CREATE) and Android destroys it
+        // when the last binding is released — even if startForeground() was called in onCreate().
+        HttpServerService.start(context)
         val intent = Intent(context, HttpServerService::class.java)
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
