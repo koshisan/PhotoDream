@@ -153,9 +153,6 @@ class SlideshowRenderer(
         currentPanAnimator?.cancel()
         currentTransitionAnimator?.cancel()
 
-        // Free Glide's memory cache to make room for video buffers
-        Glide.get(context).clearMemory()
-
         val pView = getOrCreatePlayerView()
         val player = getOrCreateExoPlayer()
 
