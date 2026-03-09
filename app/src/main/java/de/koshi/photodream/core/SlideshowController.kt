@@ -109,7 +109,14 @@ class SlideshowController(
                 hideInfoPanel()
                 return true
             }
-            Log.d(TAG, "Tap detected - finishing")
+            // Single tap: skip to next image
+            Log.d(TAG, "Tap detected - skipping to next")
+            showNextImage()
+            return true
+        }
+        
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            Log.d(TAG, "Double tap detected - finishing")
             onFinish()
             return true
         }
