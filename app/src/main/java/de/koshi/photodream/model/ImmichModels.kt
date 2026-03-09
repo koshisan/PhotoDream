@@ -52,6 +52,13 @@ data class Asset(
     }
     
     /**
+     * Get video playback URL (transcoded/streamable)
+     */
+    fun getVideoPlaybackUrl(baseUrl: String): String {
+        return "$baseUrl/api/assets/$id/video/playback"
+    }
+    
+    /**
      * Parse creation date
      */
     fun getCreationInstant(): Instant? {

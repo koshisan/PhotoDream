@@ -17,6 +17,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.view.doOnLayout
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -113,9 +114,15 @@ class SlideshowRenderer(
     }
 
     private fun getOrCreateExoPlayer(): ExoPlayer {
-        return exoPlayer ?: ExoPlayer.Builder(context).build().also {
-            exoPlayer = it
-            getOrCreatePlayerView().player = it
+        return exoPlayer ?: ExoPlayer.Builder(context).build().also { player ->
+            player.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    Log.e(TAG, "ExoPlayer error: ${error.message}", error)
+                    onImageError?.invoke("Video playback error: ${error.message}")
+                }
+            })
+            exoPlayer = player
+            getOrCreatePlayerView().player = player
         }
     }
 
@@ -138,7 +145,7 @@ class SlideshowRenderer(
         val player = getOrCreateExoPlayer()
 
         // Build media source with auth header
-        val url = asset.getOriginalUrl(baseUrl)
+        val url = asset.getVideoPlaybackUrl(baseUrl)
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(mapOf("x-api-key" to apiKey))
         val mediaItem = MediaItem.fromUri(Uri.parse(url))
