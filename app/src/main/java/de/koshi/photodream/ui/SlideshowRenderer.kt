@@ -261,7 +261,7 @@ class SlideshowRenderer(
                                 crossfade(inView = backView, outView = playerView!!) {
                                     activeIsVideo = false
                                     swapViews()
-                                    exoPlayer?.stop()
+                                    releasePlayer()
                                     startPanAnimation(frontView)
                                     onImageShown?.invoke(asset)
                                 }
@@ -275,7 +275,7 @@ class SlideshowRenderer(
                         } else {
                             // Instant switch
                             if (activeIsVideo) {
-                                exoPlayer?.stop()
+                                releasePlayer()
                                 playerView?.alpha = 0f
                                 activeIsVideo = false
                             }
@@ -500,6 +500,16 @@ class SlideshowRenderer(
     }
 
     /**
+     * Release ExoPlayer and free MediaCodec resources.
+     * Called when transitioning away from video to reclaim codec memory.
+     */
+    private fun releasePlayer() {
+        exoPlayer?.release()
+        exoPlayer = null
+        playerView?.player = null
+    }
+
+    /**
      * Stop all animations and release resources.
      */
     fun cleanup() {
@@ -507,9 +517,7 @@ class SlideshowRenderer(
         currentTransitionAnimator?.cancel()
         currentPanAnimator = null
         currentTransitionAnimator = null
-        exoPlayer?.release()
-        exoPlayer = null
-        playerView?.player = null
+        releasePlayer()
     }
 
     /**
