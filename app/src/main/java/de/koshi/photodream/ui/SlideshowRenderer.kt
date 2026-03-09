@@ -108,6 +108,7 @@ class SlideshowRenderer(
             )
             useController = false
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            setUseController(false)
             alpha = 0f
             container.addView(this)
             playerView = this
@@ -117,12 +118,16 @@ class SlideshowRenderer(
     private fun getOrCreateExoPlayer(): ExoPlayer {
         return exoPlayer ?: ExoPlayer.Builder(context)
             .setLoadControl(
-                DefaultLoadControl.Builder()
+DefaultLoadControl.Builder()
                     .setBufferDurationsMs(
-                        /* minBufferMs = */ 5_000,
-                        /* maxBufferMs = */ 15_000,
-                        /* bufferForPlaybackMs = */ 2_000,
-                        /* bufferForPlaybackAfterRebufferMs = */ 3_000
+                        /* minBufferMs = */ 2_000,
+                        /* maxBufferMs = */ 5_000,
+                        /* bufferForPlaybackMs = */ 1_000,
+                        /* bufferForPlaybackAfterRebufferMs = */ 2_000
+                    )
+                    .setBackBuffer(
+                        /* backBufferDurationMs = */ 0,
+                        /* retainBackBufferFromKeyframe = */ false
                     )
                     .build()
             )
