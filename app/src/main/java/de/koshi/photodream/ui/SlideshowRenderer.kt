@@ -20,6 +20,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -114,7 +115,18 @@ class SlideshowRenderer(
     }
 
     private fun getOrCreateExoPlayer(): ExoPlayer {
-        return exoPlayer ?: ExoPlayer.Builder(context).build().also { player ->
+        return exoPlayer ?: ExoPlayer.Builder(context)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        /* minBufferMs = */ 5_000,
+                        /* maxBufferMs = */ 15_000,
+                        /* bufferForPlaybackMs = */ 2_000,
+                        /* bufferForPlaybackAfterRebufferMs = */ 3_000
+                    )
+                    .build()
+            )
+            .build().also { player ->
             player.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     Log.e(TAG, "ExoPlayer error: ${error.message}", error)
