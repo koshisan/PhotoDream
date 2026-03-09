@@ -147,7 +147,7 @@ data class SmartSearchRequest(
     val query: String? = null,
     val page: Int = 1,
     val size: Int = 100,
-    val type: String = "IMAGE",
+    val type: String? = null,
     
     @SerializedName("personIds")
     val personIds: List<String>? = null,
@@ -186,7 +186,7 @@ data class SmartSearchRequest(
  */
 data class RandomSearchRequest(
     val count: Int = 250,
-    val type: String = "IMAGE",
+    val type: String? = null,
     
     @SerializedName("personIds")
     val personIds: List<String>? = null,

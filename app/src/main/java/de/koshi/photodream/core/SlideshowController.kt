@@ -630,10 +630,11 @@ class SlideshowController(
             // - random: random selection each time  
             // - smart_shuffle: 50/50 mix of random + recent (last 30 days)
             val (allAssets, hasMore) = client.loadPlaylist(
-                profile.searchFilter, 
-                displayMode, 
-                limit = 500, 
-                page = currentPage
+                profile.searchFilter,
+                displayMode,
+                limit = 500,
+                page = currentPage,
+                mediaType = profile.mediaType
             )
             hasMorePages = hasMore
             
@@ -707,18 +708,29 @@ class SlideshowController(
     
     private fun showCurrentImage(withTransition: Boolean = true) {
         if (playlist.isEmpty()) return
-        
+
         val asset = playlist[currentIndex]
         val cfg = config ?: return
-        
-        renderer.showImage(
-            asset = asset,
-            baseUrl = cfg.immich.baseUrl,
-            apiKey = cfg.immich.apiKey,
-            withTransition = withTransition
-        )
-        
-        Log.d(TAG, "Showing image ${currentIndex + 1}/${playlist.size}: ${asset.id}")
+        val intervalMs = cfg.display.intervalSeconds * 1000L
+
+        if (asset.type == "VIDEO") {
+            renderer.showVideo(
+                asset = asset,
+                baseUrl = cfg.immich.baseUrl,
+                apiKey = cfg.immich.apiKey,
+                intervalMs = intervalMs,
+                withTransition = withTransition
+            )
+        } else {
+            renderer.showImage(
+                asset = asset,
+                baseUrl = cfg.immich.baseUrl,
+                apiKey = cfg.immich.apiKey,
+                withTransition = withTransition
+            )
+        }
+
+        Log.d(TAG, "Showing ${asset.type} ${currentIndex + 1}/${playlist.size}: ${asset.id}")
         resetSlideshowTimer()
     }
     

@@ -8,6 +8,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Matrix
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -15,6 +16,13 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.view.doOnLayout
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.engine.GlideException
@@ -37,43 +45,48 @@ class SlideshowRenderer(
     companion object {
         private const val TAG = "SlideshowRenderer"
     }
-    
+
     // Two ImageViews for crossfade effect
     private val imageViewA: ImageView
     private val imageViewB: ImageView
     private var frontView: ImageView
     private var backView: ImageView
-    
+
+    // Video playback
+    private var playerView: PlayerView? = null
+    private var exoPlayer: ExoPlayer? = null
+    private var activeIsVideo = false
+
     // Animation state
     private var currentPanAnimator: Animator? = null
     private var currentTransitionAnimator: Animator? = null
-    
+
     // Configuration
     var crossfadeDuration: Long = 800L
     var panEnabled: Boolean = true
     var panDuration: Long = 12000L // Pan duration per image
-    
+
     // Callbacks
     var onImageShown: ((Asset) -> Unit)? = null
     var onImageError: ((String) -> Unit)? = null
-    
+
     init {
         // Create two ImageViews
         imageViewA = createImageView()
         imageViewB = createImageView()
-        
+
         // Add to container (B behind A)
         container.addView(imageViewB, 0)
         container.addView(imageViewA, 1)
-        
+
         // A is front, B is back initially
         frontView = imageViewA
         backView = imageViewB
-        
+
         // Back view starts invisible
         backView.alpha = 0f
     }
-    
+
     private fun createImageView(): ImageView {
         return ImageView(context).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -84,7 +97,89 @@ class SlideshowRenderer(
             adjustViewBounds = false
         }
     }
-    
+
+    private fun getOrCreatePlayerView(): PlayerView {
+        return playerView ?: PlayerView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            useController = false
+            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            alpha = 0f
+            container.addView(this)
+            playerView = this
+        }
+    }
+
+    private fun getOrCreateExoPlayer(): ExoPlayer {
+        return exoPlayer ?: ExoPlayer.Builder(context).build().also {
+            exoPlayer = it
+            getOrCreatePlayerView().player = it
+        }
+    }
+
+    /**
+     * Show a video asset with optional crossfade transition.
+     * The slideshow timer (intervalMs) is the master timer — the video loops (RepeatMode.ONE)
+     * until the timer fires to advance to the next item.
+     */
+    fun showVideo(
+        asset: Asset,
+        baseUrl: String,
+        apiKey: String,
+        @Suppress("UNUSED_PARAMETER") intervalMs: Long,
+        withTransition: Boolean = true
+    ) {
+        currentPanAnimator?.cancel()
+        currentTransitionAnimator?.cancel()
+
+        val pView = getOrCreatePlayerView()
+        val player = getOrCreateExoPlayer()
+
+        // Build media source with auth header
+        val url = asset.getOriginalUrl(baseUrl)
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(mapOf("x-api-key" to apiKey))
+        val mediaItem = MediaItem.fromUri(Uri.parse(url))
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+
+        player.stop()
+        player.clearMediaItems()
+        player.setMediaSource(mediaSource)
+        player.repeatMode = Player.REPEAT_MODE_ONE // Loop until slideshow timer fires
+        player.volume = 0f // Muted
+        player.prepare()
+        player.play()
+
+        fun doShow() {
+            if (withTransition) {
+                if (activeIsVideo) {
+                    // video->video: playerView already showing, just updated the source
+                    onImageShown?.invoke(asset)
+                } else {
+                    // image->video: crossfade from frontImageView to playerView
+                    crossfade(inView = pView, outView = frontView) {
+                        activeIsVideo = true
+                        onImageShown?.invoke(asset)
+                    }
+                }
+            } else {
+                frontView.alpha = 0f
+                backView.alpha = 0f
+                pView.alpha = 1f
+                activeIsVideo = true
+                onImageShown?.invoke(asset)
+            }
+        }
+
+        if (pView.width > 0 && pView.height > 0) {
+            pView.post { doShow() }
+        } else {
+            pView.doOnLayout { doShow() }
+        }
+    }
+
     /**
      * Show an image with optional crossfade transition and pan effect.
      * Automatically chooses image quality based on display resolution.
@@ -100,7 +195,7 @@ class SlideshowRenderer(
         val displayWidth = displayMetrics.widthPixels
         val displayHeight = displayMetrics.heightPixels
         val maxDimension = maxOf(displayWidth, displayHeight)
-        
+
         // Choose quality based on display resolution
         // PREVIEW = 1440px, so use original for anything larger
         val url = if (maxDimension > 1440) {
@@ -109,17 +204,17 @@ class SlideshowRenderer(
         } else {
             asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
         }
-        
+
         val glideUrl = GlideUrl(
             url,
             LazyHeaders.Builder()
                 .addHeader("x-api-key", apiKey)
                 .build()
         )
-        
+
         // Stop any running pan animation on front view
         currentPanAnimator?.cancel()
-        
+
         // Load into back view
         Glide.with(context)
             .load(glideUrl)
@@ -134,7 +229,7 @@ class SlideshowRenderer(
                     onImageError?.invoke(e?.message ?: "Unknown error")
                     return false
                 }
-                
+
                 override fun onResourceReady(
                     resource: Drawable,
                     model: Any,
@@ -154,12 +249,29 @@ class SlideshowRenderer(
                         setupImageMatrix(backView, resource)
 
                         if (withTransition) {
-                            crossfadeToBackView {
-                                startPanAnimation(frontView)
-                                onImageShown?.invoke(asset)
+                            if (activeIsVideo) {
+                                // video->image: crossfade from playerView to backView (image)
+                                crossfade(inView = backView, outView = playerView!!) {
+                                    activeIsVideo = false
+                                    swapViews()
+                                    exoPlayer?.stop()
+                                    startPanAnimation(frontView)
+                                    onImageShown?.invoke(asset)
+                                }
+                            } else {
+                                // image->image: existing crossfade
+                                crossfadeToBackView {
+                                    startPanAnimation(frontView)
+                                    onImageShown?.invoke(asset)
+                                }
                             }
                         } else {
                             // Instant switch
+                            if (activeIsVideo) {
+                                exoPlayer?.stop()
+                                playerView?.alpha = 0f
+                                activeIsVideo = false
+                            }
                             swapViews()
                             frontView.alpha = 1f
                             backView.alpha = 0f
@@ -181,7 +293,7 @@ class SlideshowRenderer(
             })
             .into(backView)
     }
-    
+
     /**
      * Setup the image matrix for proper display and pan capability.
      * Centers the image and scales it to cover the view while maintaining aspect ratio.
@@ -191,32 +303,32 @@ class SlideshowRenderer(
         val viewHeight = imageView.height.toFloat()
         val drawableWidth = drawable.intrinsicWidth.toFloat()
         val drawableHeight = drawable.intrinsicHeight.toFloat()
-        
+
         if (viewWidth == 0f || viewHeight == 0f || drawableWidth == 0f || drawableHeight == 0f) {
             // Fallback to center crop
             imageView.scaleType = ImageView.ScaleType.CENTER_CROP
             return
         }
-        
+
         // Calculate scale to cover the view (like CENTER_CROP)
         val scaleX = viewWidth / drawableWidth
         val scaleY = viewHeight / drawableHeight
         val scale = maxOf(scaleX, scaleY)
-        
+
         val scaledWidth = drawableWidth * scale
         val scaledHeight = drawableHeight * scale
-        
+
         // Center the image
         val translateX = (viewWidth - scaledWidth) / 2f
         val translateY = (viewHeight - scaledHeight) / 2f
-        
+
         val matrix = Matrix()
         matrix.setScale(scale, scale)
         matrix.postTranslate(translateX, translateY)
-        
+
         imageView.scaleType = ImageView.ScaleType.MATRIX
         imageView.imageMatrix = matrix
-        
+
         // Store pan bounds as tag for animation
         imageView.setTag(R.id.pan_bounds, PanBounds(
             minX = viewWidth - scaledWidth,
@@ -226,7 +338,43 @@ class SlideshowRenderer(
             scale = scale
         ))
     }
-    
+
+    /**
+     * General crossfade between any two views.
+     */
+    private fun crossfade(inView: View, outView: View, onComplete: () -> Unit) {
+        currentTransitionAnimator?.cancel()
+
+        inView.alpha = 0f
+        outView.alpha = 1f
+
+        val fadeIn = ObjectAnimator.ofFloat(inView, View.ALPHA, 0f, 1f)
+        val fadeOut = ObjectAnimator.ofFloat(outView, View.ALPHA, 1f, 0f)
+
+        val animatorSet = AnimatorSet().apply {
+            playTogether(fadeIn, fadeOut)
+            duration = crossfadeDuration
+            interpolator = AccelerateDecelerateInterpolator()
+
+            addListener(object : AnimatorListenerAdapter() {
+                private var canceled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    canceled = true
+                    outView.alpha = 1f
+                    inView.alpha = 0f
+                }
+                override fun onAnimationEnd(animation: Animator) {
+                    if (!canceled) {
+                        onComplete()
+                    }
+                }
+            })
+        }
+
+        currentTransitionAnimator = animatorSet
+        animatorSet.start()
+    }
+
     /**
      * Crossfade from front to back view, then swap references.
      */
@@ -240,12 +388,12 @@ class SlideshowRenderer(
 
         val fadeOut = ObjectAnimator.ofFloat(frontView, View.ALPHA, 1f, 0f)
         val fadeIn = ObjectAnimator.ofFloat(backView, View.ALPHA, 0f, 1f)
-        
+
         val animatorSet = AnimatorSet().apply {
             playTogether(fadeOut, fadeIn)
             duration = crossfadeDuration
             interpolator = AccelerateDecelerateInterpolator()
-            
+
             addListener(object : AnimatorListenerAdapter() {
                 private var canceled = false
                 override fun onAnimationCancel(animation: Animator) {
@@ -262,11 +410,11 @@ class SlideshowRenderer(
                 }
             })
         }
-        
+
         currentTransitionAnimator = animatorSet
         animatorSet.start()
     }
-    
+
     /**
      * Swap front and back view references.
      */
@@ -275,37 +423,37 @@ class SlideshowRenderer(
         frontView = backView
         backView = temp
     }
-    
+
     /**
      * Start a slow pan animation on the image.
      * Pans from one edge to another based on which dimension overflows.
      */
     private fun startPanAnimation(imageView: ImageView) {
         if (!panEnabled) return
-        
+
         val bounds = imageView.getTag(R.id.pan_bounds) as? PanBounds ?: return
-        
+
         // Determine pan direction based on overflow
         val horizontalOverflow = bounds.minX < 0
         val verticalOverflow = bounds.minY < 0
-        
+
         if (!horizontalOverflow && !verticalOverflow) {
             // Image fits perfectly, no pan needed
             return
         }
-        
+
         currentPanAnimator?.cancel()
-        
+
         val currentMatrix = Matrix(imageView.imageMatrix)
         val values = FloatArray(9)
         currentMatrix.getValues(values)
-        
+
         val startX = values[Matrix.MTRANS_X]
         val startY = values[Matrix.MTRANS_Y]
-        
+
         // Choose random start position and pan direction
         val random = java.util.Random()
-        
+
         val (targetX, targetY) = if (horizontalOverflow && verticalOverflow) {
             // Both overflow - pick a corner to corner pan
             if (random.nextBoolean()) {
@@ -321,39 +469,42 @@ class SlideshowRenderer(
             // Only vertical overflow
             Pair(startX, if (startY > bounds.minY / 2) bounds.minY else bounds.maxY)
         }
-        
+
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = panDuration
             interpolator = LinearInterpolator()
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
-            
+
             addUpdateListener { animation ->
                 val fraction = animation.animatedFraction
                 val newX = startX + (targetX - startX) * fraction
                 val newY = startY + (targetY - startY) * fraction
-                
+
                 val newMatrix = Matrix()
                 newMatrix.setScale(bounds.scale, bounds.scale)
                 newMatrix.postTranslate(newX, newY)
                 imageView.imageMatrix = newMatrix
             }
         }
-        
+
         currentPanAnimator = animator
         animator.start()
     }
-    
+
     /**
-     * Stop all animations and cleanup.
+     * Stop all animations and release resources.
      */
     fun cleanup() {
         currentPanAnimator?.cancel()
         currentTransitionAnimator?.cancel()
         currentPanAnimator = null
         currentTransitionAnimator = null
+        exoPlayer?.release()
+        exoPlayer = null
+        playerView?.player = null
     }
-    
+
     /**
      * Data class to store pan animation bounds.
      */
