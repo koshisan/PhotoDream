@@ -634,7 +634,7 @@ class SlideshowController(
                 displayMode,
                 limit = 500,
                 page = currentPage,
-                mediaType = profile.mediaType
+                mediaType = profile.mediaType ?: "image"
             )
             hasMorePages = hasMore
             

@@ -74,7 +74,7 @@ class ImmichClient(private val config: ImmichConfig) {
     suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500, page: Int = 1, mediaType: String = "image"): Pair<List<Asset>, Boolean> {
         Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, page=$page, mediaType=$mediaType, filter=$filter")
 
-        val apiType: String? = when (mediaType.lowercase()) {
+        val apiType: String? = when ((mediaType ?: "image").lowercase()) {
             "image" -> "IMAGE"
             "video" -> "VIDEO"
             else -> null // "both" -> no type filter
