@@ -79,7 +79,10 @@ data class ProfileConfig(
     val searchFilter: SearchFilter? = null,
     
     @SerializedName("exclude_paths")
-    val excludePaths: List<String> = emptyList()
+    val excludePaths: List<String> = emptyList(),
+
+    @SerializedName("media_type")
+    val mediaType: String = "image"
 )
 
 /**

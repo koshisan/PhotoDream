@@ -11,8 +11,8 @@ android {
         applicationId = "de.koshi.photodream"
         minSdk = 23
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.5.1"
+        versionCode = 18
+        versionName = "1.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -84,7 +84,11 @@ dependencies {
     
     // Lifecycle
     implementation(libs.lifecycle.runtime)
-    
+
+    // Video playback
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

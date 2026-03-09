@@ -71,16 +71,22 @@ class ImmichClient(private val config: ImmichConfig) {
      * @param page Page number for sequential mode (1-based)
      * @return Pair of (assets, hasMorePages) for sequential mode, or (assets, false) for random modes
      */
-    suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500, page: Int = 1): Pair<List<Asset>, Boolean> {
-        Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, page=$page, filter=$filter")
-        
+    suspend fun loadPlaylist(filter: SearchFilter?, mode: String, limit: Int = 500, page: Int = 1, mediaType: String = "image"): Pair<List<Asset>, Boolean> {
+        Log.i(TAG, "Loading playlist: mode=$mode, limit=$limit, page=$page, mediaType=$mediaType, filter=$filter")
+
+        val apiType: String? = when (mediaType.lowercase()) {
+            "image" -> "IMAGE"
+            "video" -> "VIDEO"
+            else -> null // "both" -> no type filter
+        }
+
         return when (mode) {
-            "sequential" -> loadSequentialPage(filter, page, limit)
-            "random" -> Pair(loadRandom(filter, limit), false)
-            "smart_shuffle" -> Pair(loadSmartShuffle(filter, limit), false)
+            "sequential" -> loadSequentialPage(filter, page, limit, apiType)
+            "random" -> Pair(loadRandom(filter, limit, apiType), false)
+            "smart_shuffle" -> Pair(loadSmartShuffle(filter, limit, apiType), false)
             else -> {
                 Log.w(TAG, "Unknown display mode '$mode', defaulting to smart_shuffle")
-                Pair(loadSmartShuffle(filter, limit), false)
+                Pair(loadSmartShuffle(filter, limit, apiType), false)
             }
         }
     }
@@ -89,17 +95,17 @@ class ImmichClient(private val config: ImmichConfig) {
      * Sequential mode with pagination: Load a single page of chronologically sorted images
      * @return Pair of (assets, hasMorePages)
      */
-    private suspend fun loadSequentialPage(filter: SearchFilter?, page: Int, pageSize: Int): Pair<List<Asset>, Boolean> {
+    private suspend fun loadSequentialPage(filter: SearchFilter?, page: Int, pageSize: Int, apiType: String? = "IMAGE"): Pair<List<Asset>, Boolean> {
         if (!hasFilter(filter)) {
             Log.i(TAG, "No filter for sequential - using random fallback")
-            return Pair(searchWithRandomApi(null, pageSize), false)
+            return Pair(searchWithRandomApi(null, pageSize, apiType), false)
         }
-        
+
         val request = SmartSearchRequest(
             query = filter!!.query,
             page = page,
             size = pageSize,
-            type = filter.type ?: "IMAGE",
+            type = apiType ?: filter.type,
             personIds = filter.personIds,
             tagIds = filter.tagIds,
             albumId = filter.albumId,
@@ -135,23 +141,23 @@ class ImmichClient(private val config: ImmichConfig) {
     /**
      * Random mode: Random selection each time
      */
-    private suspend fun loadRandom(filter: SearchFilter?, limit: Int): List<Asset> {
-        return searchWithRandomApi(filter, limit)
+    private suspend fun loadRandom(filter: SearchFilter?, limit: Int, apiType: String? = "IMAGE"): List<Asset> {
+        return searchWithRandomApi(filter, limit, apiType)
     }
     
     /**
      * Smart shuffle mode: 50/50 mix of random + recent, interleaved
      * Combines "throwback memories" with "recent photos"
      */
-    private suspend fun loadSmartShuffle(filter: SearchFilter?, limit: Int): List<Asset> {
+    private suspend fun loadSmartShuffle(filter: SearchFilter?, limit: Int, apiType: String? = "IMAGE"): List<Asset> {
         val halfLimit = limit / 2
-        
+
         // Get random assets from all time
-        val randomAssets = searchWithRandomApi(filter, halfLimit)
-        
+        val randomAssets = searchWithRandomApi(filter, halfLimit, apiType)
+
         // Get random assets from last 30 days
         val recentFilter = addRecentFilter(filter)
-        val recentAssets = searchWithRandomApi(recentFilter, halfLimit)
+        val recentAssets = searchWithRandomApi(recentFilter, halfLimit, apiType)
         
         Log.i(TAG, "Smart shuffle: ${randomAssets.size} random + ${recentAssets.size} recent")
         
@@ -193,17 +199,17 @@ class ImmichClient(private val config: ImmichConfig) {
     /**
      * Search using /api/search/smart (fixed relevance order)
      */
-    private suspend fun searchWithSmartApi(filter: SearchFilter?, limit: Int): List<Asset> {
+    private suspend fun searchWithSmartApi(filter: SearchFilter?, limit: Int, apiType: String? = "IMAGE"): List<Asset> {
         if (!hasFilter(filter)) {
             Log.i(TAG, "No filter for sequential mode - using random instead")
-            return searchWithRandomApi(null, limit)
+            return searchWithRandomApi(null, limit, apiType)
         }
-        
+
         return try {
             val request = SmartSearchRequest(
                 query = filter!!.query,
                 size = limit,
-                type = filter.type ?: "IMAGE",
+                type = apiType ?: filter.type,
                 personIds = filter.personIds,
                 tagIds = filter.tagIds,
                 albumId = filter.albumId,
@@ -227,11 +233,11 @@ class ImmichClient(private val config: ImmichConfig) {
     /**
      * Search using /api/search/random (random each time)
      */
-    private suspend fun searchWithRandomApi(filter: SearchFilter?, count: Int): List<Asset> {
+    private suspend fun searchWithRandomApi(filter: SearchFilter?, count: Int, apiType: String? = "IMAGE"): List<Asset> {
         return try {
             val request = RandomSearchRequest(
                 count = count,
-                type = filter?.type ?: "IMAGE",
+                type = apiType ?: filter?.type,
                 personIds = filter?.personIds,
                 tagIds = filter?.tagIds,
                 albumId = filter?.albumId,
