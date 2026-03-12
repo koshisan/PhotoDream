@@ -196,8 +196,8 @@ DefaultLoadControl.Builder()
         bgView.tag = null
         Glide.with(context)
             .load(glideUrl)
-            .override(256)
-            .transform(CenterCrop(), BlurTransformation(0.15f))
+            .override(512)
+            .transform(CenterCrop(), BlurTransformation(0.35f))
             .into(object : com.bumptech.glide.request.target.CustomTarget<Drawable>() {
                 override fun onResourceReady(resource: Drawable, transition: com.bumptech.glide.request.transition.Transition<in Drawable>?) {
                     bgView.setImageDrawable(resource)
@@ -246,50 +246,93 @@ DefaultLoadControl.Builder()
         player.prepare()
         player.play()
 
+        // Track if first frame already rendered (for fast-loading videos)
+        var firstFrameRendered = false
+        player.addListener(object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                player.removeListener(this)
+                firstFrameRendered = true
+            }
+        })
+
+        fun fadeInPlayer() {
+            if (needsBlurBackground) {
+                // Video over blur background
+                ObjectAnimator.ofFloat(pView, View.ALPHA, 0f, 1f).apply {
+                    duration = crossfadeDuration / 2
+                    start()
+                }
+            } else {
+                // No blur needed - just show full
+                pView.alpha = 1f
+            }
+        }
+
         fun doShow() {
             if (withTransition) {
                 if (activeIsVideo) {
                     // video->video: update blur background, source already swapped
-                    bgView.alpha = 1f
+                    if (needsBlurBackground) bgView.alpha = 1f
                     onImageShown?.invoke(asset)
                 } else {
-                    // image->video: crossfade to blurred background first, then fade in player when ready
+                    // image->video: crossfade to blur bg (or directly to player if no blur needed)
                     pView.alpha = 0f
-                    // Wait for blur image then crossfade
-                    fun startCrossfade() {
-                        crossfade(inView = bgView, outView = frontView) {
-                        activeIsVideo = true
-                        // Fade in playerView on top of blurred background once video is rendering
-                        player.addListener(object : Player.Listener {
-                            override fun onRenderedFirstFrame() {
-                                player.removeListener(this)
-                                ObjectAnimator.ofFloat(pView, View.ALPHA, 0f, 1f).apply {
-                                    duration = crossfadeDuration / 2
-                                    start()
-                                }
+                    activeIsVideo = true
+
+                    if (!needsBlurBackground) {
+                        // No blur - wait for first frame then crossfade directly to player
+                        fun showPlayer() {
+                            crossfade(inView = pView, outView = frontView) {
+                                onImageShown?.invoke(asset)
                             }
-                        })
-                        onImageShown?.invoke(asset)
                         }
-                    }
-                    if (bgView.tag == "loaded") {
-                        startCrossfade()
-                    } else {
-                        bgView.postDelayed(object : Runnable {
-                            override fun run() {
-                                if (bgView.tag == "loaded") {
-                                    startCrossfade()
-                                } else {
-                                    bgView.postDelayed(this, 50)
+                        if (firstFrameRendered) {
+                            showPlayer()
+                        } else {
+                            player.addListener(object : Player.Listener {
+                                override fun onRenderedFirstFrame() {
+                                    player.removeListener(this)
+                                    showPlayer()
                                 }
+                            })
+                        }
+                    } else {
+                        // Blur path: wait for blur image → crossfade to blur → fade in player on first frame
+                        fun startCrossfade() {
+                            crossfade(inView = bgView, outView = frontView) {
+                                // Blur is now showing, fade in player when video is ready
+                                if (firstFrameRendered) {
+                                    fadeInPlayer()
+                                } else {
+                                    player.addListener(object : Player.Listener {
+                                        override fun onRenderedFirstFrame() {
+                                            player.removeListener(this)
+                                            fadeInPlayer()
+                                        }
+                                    })
+                                }
+                                onImageShown?.invoke(asset)
                             }
-                        }, 50)
+                        }
+                        if (bgView.tag == "loaded") {
+                            startCrossfade()
+                        } else {
+                            bgView.postDelayed(object : Runnable {
+                                override fun run() {
+                                    if (bgView.tag == "loaded") {
+                                        startCrossfade()
+                                    } else {
+                                        bgView.postDelayed(this, 50)
+                                    }
+                                }
+                            }, 50)
+                        }
                     }
                 }
             } else {
                 frontView.alpha = 0f
                 backView.alpha = 0f
-                bgView.alpha = 1f
+                if (needsBlurBackground) bgView.alpha = 1f
                 pView.alpha = 1f
                 activeIsVideo = true
                 onImageShown?.invoke(asset)
