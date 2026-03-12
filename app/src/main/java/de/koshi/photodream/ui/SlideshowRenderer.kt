@@ -193,30 +193,20 @@ DefaultLoadControl.Builder()
         )
 
         // Always load blurred thumbnail - we'll decide at onVideoSizeChanged whether to show it
+        bgView.tag = null
         Glide.with(context)
             .load(glideUrl)
             .override(256)
             .transform(CenterCrop(), BlurTransformation(0.15f))
-            .listener(object : RequestListener<Drawable> {
-                override fun onLoadFailed(
-                    e: GlideException?,
-                    model: Any?,
-                    target: Target<Drawable>,
-                    isFirstResource: Boolean
-                ): Boolean = false
-
-                override fun onResourceReady(
-                    resource: Drawable,
-                    model: Any?,
-                    target: Target<Drawable>,
-                    dataSource: DataSource,
-                    isFirstResource: Boolean
-                ): Boolean {
+            .into(object : com.bumptech.glide.request.target.CustomTarget<Drawable>() {
+                override fun onResourceReady(resource: Drawable, transition: com.bumptech.glide.request.transition.Transition<in Drawable>?) {
+                    bgView.setImageDrawable(resource)
                     bgView.tag = "loaded"
-                    return false
+                }
+                override fun onLoadCleared(placeholder: Drawable?) {
+                    bgView.setImageDrawable(placeholder)
                 }
             })
-            .into(bgView)
 
         // Start with FIT, will switch to ZOOM if aspect ratios are close enough
         pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
