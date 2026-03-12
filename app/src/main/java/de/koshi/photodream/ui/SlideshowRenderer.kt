@@ -216,17 +216,20 @@ DefaultLoadControl.Builder()
         player.addListener(object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 player.removeListener(this)
-                if (videoSize.width > 0 && videoSize.height > 0) {
-                    val displayWidth = container.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
-                    val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
-                    val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
-                    val videoRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
-                    if (Math.abs(videoRatio - displayRatio) / displayRatio <= 0.20f) {
-                        // Close enough - use ZOOM (no bars) and hide blur background
-                        pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        needsBlurBackground = false
-                        bgView.alpha = 0f
-                    }
+                val displayWidth = container.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+                val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
+                val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
+                val videoRatio = if (videoSize.height > 0) videoSize.width.toFloat() / videoSize.height.toFloat() else 0f
+                val ratioDiff = if (displayRatio > 0f) Math.abs(videoRatio - displayRatio) / displayRatio else 1f
+                Log.d(TAG, "Video size: ${videoSize.width}x${videoSize.height} (ratio=$videoRatio), display: ${displayWidth}x${displayHeight} (ratio=$displayRatio), diff=$ratioDiff")
+                if (videoSize.width > 0 && videoSize.height > 0 && ratioDiff <= 0.20f) {
+                    // Close enough - use ZOOM (no bars) and hide blur background
+                    Log.d(TAG, "Aspect ratio close enough (${ratioDiff * 100}%) - using ZOOM")
+                    pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    needsBlurBackground = false
+                    bgView.alpha = 0f
+                } else {
+                    Log.d(TAG, "Aspect ratio differs (${ratioDiff * 100}%) - using FIT with blur")
                 }
             }
         })
