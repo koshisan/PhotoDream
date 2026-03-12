@@ -30,6 +30,7 @@ import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.engine.GlideException
 import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.model.LazyHeaders
+import com.bumptech.glide.load.resource.bitmap.CenterCrop
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.target.Target
 import de.koshi.photodream.R
@@ -182,7 +183,7 @@ DefaultLoadControl.Builder()
         val pView = getOrCreatePlayerView()
         val player = getOrCreateExoPlayer()
 
-        // Load blurred thumbnail as background (tiny size = natural blur via bilinear upscaling)
+        // Load blurred thumbnail as background
         val thumbUrl = asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
         val glideUrl = GlideUrl(
             thumbUrl,
@@ -191,10 +192,54 @@ DefaultLoadControl.Builder()
                 .build()
         )
 
+        // Always load blurred thumbnail - we'll decide at onVideoSizeChanged whether to show it
         Glide.with(context)
             .load(glideUrl)
-            .override(32) // Tiny size for blur effect
+            .override(256)
+            .transform(CenterCrop(), BlurTransformation(0.15f))
+            .listener(object : RequestListener<Drawable> {
+                override fun onLoadFailed(
+                    e: GlideException?,
+                    model: Any?,
+                    target: Target<Drawable>,
+                    isFirstResource: Boolean
+                ): Boolean = false
+
+                override fun onResourceReady(
+                    resource: Drawable,
+                    model: Any?,
+                    target: Target<Drawable>,
+                    dataSource: DataSource,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    bgView.tag = "loaded"
+                    return false
+                }
+            })
             .into(bgView)
+
+        // Start with FIT, will switch to ZOOM if aspect ratios are close enough
+        pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        var needsBlurBackground = true
+
+        // Detect video aspect ratio once ExoPlayer knows it
+        player.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                player.removeListener(this)
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    val displayWidth = container.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+                    val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
+                    val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
+                    val videoRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                    if (Math.abs(videoRatio - displayRatio) / displayRatio <= 0.05f) {
+                        // Close enough - use ZOOM (no bars) and hide blur background
+                        pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        needsBlurBackground = false
+                        bgView.alpha = 0f
+                    }
+                }
+            }
+        })
 
         // Build media source with auth header
         val url = asset.getVideoPlaybackUrl(baseUrl)
@@ -220,7 +265,9 @@ DefaultLoadControl.Builder()
                 } else {
                     // image->video: crossfade to blurred background first, then fade in player when ready
                     pView.alpha = 0f
-                    crossfade(inView = bgView, outView = frontView) {
+                    // Wait for blur image then crossfade
+                    fun startCrossfade() {
+                        crossfade(inView = bgView, outView = frontView) {
                         activeIsVideo = true
                         // Fade in playerView on top of blurred background once video is rendering
                         player.addListener(object : Player.Listener {
@@ -233,6 +280,20 @@ DefaultLoadControl.Builder()
                             }
                         })
                         onImageShown?.invoke(asset)
+                        }
+                    }
+                    if (bgView.tag == "loaded") {
+                        startCrossfade()
+                    } else {
+                        bgView.postDelayed(object : Runnable {
+                            override fun run() {
+                                if (bgView.tag == "loaded") {
+                                    startCrossfade()
+                                } else {
+                                    bgView.postDelayed(this, 50)
+                                }
+                            }
+                        }, 50)
                     }
                 }
             } else {
