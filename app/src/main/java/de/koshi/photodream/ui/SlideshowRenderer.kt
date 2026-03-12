@@ -55,6 +55,7 @@ class SlideshowRenderer(
     private var backView: ImageView
 
     // Video playback
+    private var videoBackgroundView: ImageView? = null
     private var playerView: PlayerView? = null
     private var exoPlayer: ExoPlayer? = null
     private var activeIsVideo = false
@@ -100,6 +101,25 @@ class SlideshowRenderer(
         }
     }
 
+    private fun getOrCreateVideoBackgroundView(): ImageView {
+        return videoBackgroundView ?: ImageView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0f
+            // Insert behind playerView if it already exists, otherwise just append
+            val pViewIndex = playerView?.let { container.indexOfChild(it) } ?: -1
+            if (pViewIndex >= 0) {
+                container.addView(this, pViewIndex)
+            } else {
+                container.addView(this)
+            }
+            videoBackgroundView = this
+        }
+    }
+
     private fun getOrCreatePlayerView(): PlayerView {
         return playerView ?: PlayerView(context).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -107,7 +127,7 @@ class SlideshowRenderer(
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
             useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setUseController(false)
             alpha = 0f
             container.addView(this)
@@ -158,8 +178,23 @@ DefaultLoadControl.Builder()
         currentPanAnimator?.cancel()
         currentTransitionAnimator?.cancel()
 
+        val bgView = getOrCreateVideoBackgroundView()
         val pView = getOrCreatePlayerView()
         val player = getOrCreateExoPlayer()
+
+        // Load blurred thumbnail as background (tiny size = natural blur via bilinear upscaling)
+        val thumbUrl = asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
+        val glideUrl = GlideUrl(
+            thumbUrl,
+            LazyHeaders.Builder()
+                .addHeader("x-api-key", apiKey)
+                .build()
+        )
+
+        Glide.with(context)
+            .load(glideUrl)
+            .override(32) // Tiny size for blur effect
+            .into(bgView)
 
         // Build media source with auth header
         val url = asset.getVideoPlaybackUrl(baseUrl)
@@ -179,18 +214,31 @@ DefaultLoadControl.Builder()
         fun doShow() {
             if (withTransition) {
                 if (activeIsVideo) {
-                    // video->video: playerView already showing, just updated the source
+                    // video->video: update blur background, source already swapped
+                    bgView.alpha = 1f
                     onImageShown?.invoke(asset)
                 } else {
-                    // image->video: crossfade from frontImageView to playerView
-                    crossfade(inView = pView, outView = frontView) {
+                    // image->video: crossfade to blurred background first, then fade in player when ready
+                    pView.alpha = 0f
+                    crossfade(inView = bgView, outView = frontView) {
                         activeIsVideo = true
+                        // Fade in playerView on top of blurred background once video is rendering
+                        player.addListener(object : Player.Listener {
+                            override fun onRenderedFirstFrame() {
+                                player.removeListener(this)
+                                ObjectAnimator.ofFloat(pView, View.ALPHA, 0f, 1f).apply {
+                                    duration = crossfadeDuration / 2
+                                    start()
+                                }
+                            }
+                        })
                         onImageShown?.invoke(asset)
                     }
                 }
             } else {
                 frontView.alpha = 0f
                 backView.alpha = 0f
+                bgView.alpha = 1f
                 pView.alpha = 1f
                 activeIsVideo = true
                 onImageShown?.invoke(asset)
@@ -277,6 +325,7 @@ DefaultLoadControl.Builder()
                                 // video->image: crossfade from playerView to backView (image)
                                 crossfade(inView = backView, outView = playerView!!) {
                                     activeIsVideo = false
+                                    videoBackgroundView?.alpha = 0f
                                     swapViews()
                                     releasePlayer()
                                     startPanAnimation(frontView)
@@ -294,6 +343,7 @@ DefaultLoadControl.Builder()
                             if (activeIsVideo) {
                                 releasePlayer()
                                 playerView?.alpha = 0f
+                                videoBackgroundView?.alpha = 0f
                                 activeIsVideo = false
                             }
                             swapViews()
