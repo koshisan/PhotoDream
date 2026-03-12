@@ -221,7 +221,7 @@ DefaultLoadControl.Builder()
                     val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
                     val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
                     val videoRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
-                    if (Math.abs(videoRatio - displayRatio) / displayRatio <= 0.05f) {
+                    if (Math.abs(videoRatio - displayRatio) / displayRatio <= 0.20f) {
                         // Close enough - use ZOOM (no bars) and hide blur background
                         pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                         needsBlurBackground = false
