@@ -212,27 +212,25 @@ DefaultLoadControl.Builder()
         pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         var needsBlurBackground = true
 
-        // Detect video aspect ratio once ExoPlayer knows it
-        player.addListener(object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                player.removeListener(this)
-                val displayWidth = container.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
-                val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
-                val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
-                val videoRatio = if (videoSize.height > 0) videoSize.width.toFloat() / videoSize.height.toFloat() else 0f
-                val ratioDiff = if (displayRatio > 0f) Math.abs(videoRatio - displayRatio) / displayRatio else 1f
-                Log.d(TAG, "Video size: ${videoSize.width}x${videoSize.height} (ratio=$videoRatio), display: ${displayWidth}x${displayHeight} (ratio=$displayRatio), diff=$ratioDiff")
-                if (videoSize.width > 0 && videoSize.height > 0 && ratioDiff <= 0.20f) {
-                    // Close enough - use ZOOM (no bars) and hide blur background
-                    Log.d(TAG, "Aspect ratio close enough (${ratioDiff * 100}%) - using ZOOM")
-                    pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    needsBlurBackground = false
-                    bgView.alpha = 0f
-                } else {
-                    Log.d(TAG, "Aspect ratio differs (${ratioDiff * 100}%) - using FIT with blur")
-                }
+        // Detect video aspect ratio - check after player is ready
+        // (onVideoSizeChanged can fire with 0x0 before decoder init)
+        fun checkVideoAspectRatio() {
+            val videoSize = player.videoSize
+            val displayWidth = container.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+            val displayHeight = container.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
+            val displayRatio = displayWidth.toFloat() / displayHeight.toFloat()
+            val videoRatio = if (videoSize.height > 0) videoSize.width.toFloat() / videoSize.height.toFloat() else 0f
+            val ratioDiff = if (displayRatio > 0f) Math.abs(videoRatio - displayRatio) / displayRatio else 1f
+            Log.d(TAG, "Video size: ${videoSize.width}x${videoSize.height} (ratio=$videoRatio), display: ${displayWidth}x${displayHeight} (ratio=$displayRatio), diff=$ratioDiff")
+            if (videoSize.width > 0 && videoSize.height > 0 && ratioDiff <= 0.20f) {
+                Log.d(TAG, "Aspect ratio close enough (${(ratioDiff * 100).toInt()}%) - using ZOOM")
+                pView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                needsBlurBackground = false
+                bgView.alpha = 0f
+            } else if (videoSize.width > 0) {
+                Log.d(TAG, "Aspect ratio differs (${(ratioDiff * 100).toInt()}%) - using FIT with blur")
             }
-        })
+        }
 
         // Build media source with auth header
         val url = asset.getVideoPlaybackUrl(baseUrl)
@@ -255,6 +253,8 @@ DefaultLoadControl.Builder()
             override fun onRenderedFirstFrame() {
                 player.removeListener(this)
                 firstFrameRendered = true
+                // Now video size is guaranteed to be known
+                checkVideoAspectRatio()
             }
         })
 
