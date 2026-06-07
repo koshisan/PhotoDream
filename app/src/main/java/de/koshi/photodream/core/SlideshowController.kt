@@ -306,8 +306,9 @@ class SlideshowController(
         // mainRow (horizontal, bottom-aligned)
         // ├── leftColumn (vertical): clock (thin), date (weekday + date)
         // └── rightColumn (horizontal): weather icon + [temp, meta]
-        // Bundled variable font (Roboto Flex) at exact weights, per the design handoff.
-        val clockTypeface = Fonts.weight(context, 200, tabular = true)
+        // Bundled variable font (Figtree, Segoe-UI-adjacent) at exact weights.
+        // Segoe UI Light ≈ 300 → clock/temp use 300, date/meta 400.
+        val clockTypeface = Fonts.weight(context, 300, tabular = true)
         val dateTypeface = Fonts.weight(context, 400)
         val tempTypeface = Fonts.weight(context, 300, tabular = true)
         val metaTypeface = Fonts.weight(context, 400, tabular = true)
