@@ -639,6 +639,15 @@ class SlideshowController(
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
 
+        // Reserve ~12% extra width: the thin font's last glyph can exceed the measured
+        // advance width and gets clipped by the TextView at larger sizes (WRAP_CONTENT
+        // padding does not help). Fixed width + left alignment keeps it clean.
+        val clockSample = if (display.clockFormat == "12h") "88:88 AM" else "88:88"
+        val clockWidth = (clockView.paint.measureText(clockSample) * 1.12f).toInt()
+        clockView.layoutParams = LinearLayout.LayoutParams(
+            clockWidth, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+
         // Date (weekday + date), sized relative to the clock
         if (display.date) {
             dateView.visibility = View.VISIBLE
@@ -730,6 +739,11 @@ class SlideshowController(
         val temp = weather.temperature
         weatherTemp.text = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         weatherTemp.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(16f)
+        // Same anti-clip width reservation as the clock (thin font + "°").
+        val tempWidth = (weatherTemp.paint.measureText("88${weather.temperatureUnit}") * 1.15f).toInt()
+        weatherTemp.layoutParams = LinearLayout.LayoutParams(
+            tempWidth, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
 
         val meta = conditionLabel(weather.condition)
         if (meta.isNotBlank()) {
