@@ -43,7 +43,9 @@ data class DisplayConfig(
     val dateFormat: String = "dd.MM.yyyy", // Date format string
     
     val weather: WeatherConfig? = null, // Weather display settings
-    
+
+    val calendar: CalendarConfig? = null, // Calendar display settings
+
     @SerializedName("interval_seconds")
     val intervalSeconds: Int = 30,
     
@@ -68,6 +70,85 @@ data class WeatherConfig(
     
     @SerializedName("temperature_unit")
     val temperatureUnit: String = "°C" // °C or °F
+)
+
+/**
+ * Calendar display configuration (pushed via /configure).
+ *
+ * The actual event list is delivered separately via the POST /calendar endpoint,
+ * because Home Assistant calendars are typically spread across multiple
+ * `calendar.*` entities that must be aggregated into one list on the HA side.
+ */
+data class CalendarConfig(
+    val enabled: Boolean = false,
+
+    // Position scheme matches the clock:
+    // 0=top-left, 1=top-center, 2=top-right, 3=bottom-left, 4=bottom-center, 5=bottom-right, 6=center
+    @SerializedName("position")
+    val position: Int = 3,
+
+    @SerializedName("max_events")
+    val maxEvents: Int = 5,
+
+    @SerializedName("show_location")
+    val showLocation: Boolean = false,
+
+    @SerializedName("font_size")
+    val fontSize: Int = 16
+)
+
+/**
+ * Payload for POST /calendar - the aggregated upcoming events from all HA calendars.
+ */
+data class CalendarData(
+    val events: List<CalendarEvent> = emptyList()
+)
+
+/**
+ * A single calendar event. Times are ISO-8601 strings (with offset where available).
+ */
+data class CalendarEvent(
+    val title: String = "",
+
+    val start: String? = null,   // ISO-8601, e.g. "2026-06-08T09:00:00+02:00"
+
+    val end: String? = null,     // ISO-8601 (optional)
+
+    @SerializedName("all_day")
+    val allDay: Boolean = false,
+
+    val calendar: String? = null, // friendly name of the source calendar (e.g. "Privat")
+
+    val color: String? = null,    // accent color hex, e.g. "#03a9f4"
+
+    val location: String? = null
+)
+
+/**
+ * Payload for POST /notify - a Home-Assistant-style notification overlay.
+ *
+ * Shown as a card over the slideshow. Tapping it triggers [callbackUrl]
+ * (if set) and dismisses the card without ending the slideshow.
+ */
+data class NotificationPayload(
+    val title: String? = null,
+
+    val message: String = "",
+
+    val color: String? = null,    // accent color hex, e.g. "#f44336"
+
+    @SerializedName("image_url")
+    val imageUrl: String? = null,
+
+    val duration: Int = 8,        // seconds; <= 0 means persistent until tap/dismiss
+
+    val sound: Boolean = false,   // play the system notification sound when shown
+
+    @SerializedName("callback_url")
+    val callbackUrl: String? = null,
+
+    @SerializedName("callback_method")
+    val callbackMethod: String = "POST" // "POST" or "GET"
 )
 
 data class ProfileConfig(

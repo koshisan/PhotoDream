@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import com.bumptech.glide.Glide
 import com.google.gson.Gson
 import de.koshi.photodream.R
 import de.koshi.photodream.api.ImmichClient
@@ -63,10 +64,24 @@ class SlideshowController(
     private lateinit var weatherTemp: TextView
     private lateinit var updateBanner: TextView       // "Update verfügbar" banner
     private lateinit var infoPanel: LinearLayout      // Image info panel (long-press)
+    private lateinit var calendarPanel: LinearLayout  // Upcoming calendar events from HA
+    private lateinit var notificationCard: LinearLayout // HA-style notification overlay
+    private lateinit var notifAccentBar: View
+    private lateinit var notifTitle: TextView
+    private lateinit var notifMessage: TextView
+    private lateinit var notifImage: ImageView
     private lateinit var renderer: SlideshowRenderer
-    
+
     // Info panel state
     private var isInfoPanelVisible = false
+
+    // Calendar state
+    private var calendarEvents: List<CalendarEvent> = emptyList()
+
+    // Notification state
+    private var currentNotification: NotificationPayload? = null
+    private var notificationVisible = false
+    private var notificationDismissRunnable: Runnable? = null
     
     // Update state
     private var pendingUpdateInfo: HttpServerService.UpdateInfo? = null
@@ -104,6 +119,11 @@ class SlideshowController(
         private val SWIPE_VELOCITY_THRESHOLD = 100
         
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // If a notification is showing and the tap landed on it, trigger its callback
+            if (notificationVisible && isTouchInside(notificationCard, e)) {
+                onNotificationTapped()
+                return true
+            }
             // If info panel is visible, hide it instead of finishing
             if (isInfoPanelVisible) {
                 hideInfoPanel()
@@ -173,8 +193,12 @@ class SlideshowController(
                 getStatus = { getCurrentStatus() }
                 getPlaylistInfo = { getPlaylistInfoInternal() }
                 onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
+                onCalendarReceived = { events -> applyCalendar(events) }
+                onShowNotification = { payload -> showNotification(payload) }
                 // Check if there's already a pending update
                 pendingUpdate?.let { showUpdateAvailable(it) }
+                // Render any calendar events that arrived before the slideshow started
+                if (lastCalendarEvents.isNotEmpty()) applyCalendar(lastCalendarEvents)
                 updateStatus(getCurrentStatus())
             }
             serviceBound = true
@@ -204,6 +228,7 @@ class SlideshowController(
     fun stop() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
+        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
@@ -360,11 +385,35 @@ class SlideshowController(
             }
         }
         
+        // Calendar panel (upcoming events from HA, shown when enabled in config)
+        calendarPanel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(28, 20, 28, 20)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#99000000"))  // 60% opacity black
+                cornerRadius = 24f
+            }
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val margin = 32
+                setMargins(margin, margin, margin, margin)
+                gravity = Gravity.BOTTOM or Gravity.START
+            }
+        }
+
+        // Notification card (HA-style overlay, tappable)
+        buildNotificationCard()
+
         container.addView(imageContainer)
         container.addView(overlayContainer)
+        container.addView(calendarPanel)
         container.addView(infoPanel)
         container.addView(updateBanner)
-        
+        container.addView(notificationCard)  // always on top
+
         // Initialize renderer
         renderer = SlideshowRenderer(context, imageContainer).apply {
             crossfadeDuration = 800L
@@ -405,6 +454,8 @@ class SlideshowController(
                 getStatus = null
                 getPlaylistInfo = null
                 onUpdateAvailable = null
+                onCalendarReceived = null
+                onShowNotification = null
                 updateStatus(DeviceStatus(online = true, active = false))
             }
             context.unbindService(serviceConnection)
@@ -465,6 +516,7 @@ class SlideshowController(
                     httpService?.updateConfig(cfg)
                     immichClient = ImmichClient(cfg.immich)
                     setupClock(cfg.display)
+                    setupCalendar(cfg.display)
                     applyPanSpeed(cfg.display.panSpeed)
                     loadPlaylist(cfg.profile)
                     startSlideshow()
@@ -877,8 +929,9 @@ class SlideshowController(
         Log.i(TAG, "Profile check: old='$oldProfileId' new='$newProfileId' changed=${oldProfileId != newProfileId}")
         
         config = newConfig
-        
+
         setupClock(newConfig.display)
+        setupCalendar(newConfig.display)
         applyPanSpeed(newConfig.display.panSpeed, reload = oldPanSpeed != newConfig.display.panSpeed)
         resetSlideshowTimer()
         
@@ -1198,6 +1251,377 @@ class SlideshowController(
         infoPanel.addView(divider)
     }
     
+    // --- Calendar Overlay ---
+
+    /**
+     * Apply display settings for the calendar overlay (called when config changes).
+     */
+    private fun setupCalendar(display: DisplayConfig) {
+        val cal = display.calendar
+        if (cal == null || !cal.enabled) {
+            calendarPanel.visibility = View.GONE
+            return
+        }
+
+        val lp = calendarPanel.layoutParams as FrameLayout.LayoutParams
+        val margin = 32
+        lp.setMargins(margin, margin, margin, margin)
+        lp.gravity = when (cal.position) {
+            0 -> Gravity.TOP or Gravity.START
+            1 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            2 -> Gravity.TOP or Gravity.END
+            3 -> Gravity.BOTTOM or Gravity.START
+            4 -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            5 -> Gravity.BOTTOM or Gravity.END
+            6 -> Gravity.CENTER
+            else -> Gravity.BOTTOM or Gravity.START
+        }
+        calendarPanel.layoutParams = lp
+
+        renderCalendar()
+    }
+
+    /**
+     * Store new events (from POST /calendar) and re-render.
+     */
+    private fun applyCalendar(events: List<CalendarEvent>) {
+        Log.i(TAG, "Applying ${events.size} calendar events")
+        calendarEvents = events
+        renderCalendar()
+    }
+
+    private fun renderCalendar() {
+        if (!::calendarPanel.isInitialized) return
+        val cal = config?.display?.calendar
+
+        calendarPanel.removeAllViews()
+
+        if (cal == null || !cal.enabled || calendarEvents.isEmpty()) {
+            calendarPanel.visibility = View.GONE
+            return
+        }
+
+        val baseFont = cal.fontSize.toFloat()
+
+        val sorted = calendarEvents
+            .sortedBy { parseEventTime(it.start)?.toInstant() ?: java.time.Instant.MAX }
+            .take(cal.maxEvents.coerceAtLeast(1))
+
+        var lastDay: String? = null
+        var first = true
+        for (ev in sorted) {
+            val dayLabel = dayLabelFor(ev.start)
+            if (dayLabel != lastDay) {
+                addCalendarHeader(dayLabel, baseFont, first)
+                lastDay = dayLabel
+                first = false
+            }
+            addCalendarEvent(ev, baseFont, cal.showLocation)
+        }
+
+        calendarPanel.visibility = View.VISIBLE
+    }
+
+    private fun addCalendarHeader(label: String, baseFont: Float, first: Boolean) {
+        val tv = TextView(context).apply {
+            text = label
+            setTextColor(Color.parseColor("#FFD54F"))  // warm amber
+            textSize = baseFont * 0.85f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = if (first) 0 else dp(10) }
+        }
+        calendarPanel.addView(tv)
+    }
+
+    private fun addCalendarEvent(ev: CalendarEvent, baseFont: Float, showLocation: Boolean) {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        }
+
+        val dot = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(9), dp(9)).apply { marginEnd = dp(8) }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(parseColorOrNull(ev.color) ?: Color.WHITE)
+            }
+        }
+
+        val zdt = parseEventTime(ev.start)
+        val timeStr = if (ev.allDay) {
+            "ganztägig"
+        } else {
+            zdt?.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) ?: ""
+        }
+
+        val eventText = TextView(context).apply {
+            text = if (timeStr.isNotBlank()) "$timeStr  ${ev.title}" else ev.title
+            setTextColor(Color.WHITE)
+            textSize = baseFont
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            maxWidth = dp(420)
+        }
+
+        row.addView(dot)
+        row.addView(eventText)
+        calendarPanel.addView(row)
+
+        if (showLocation && !ev.location.isNullOrBlank()) {
+            val loc = TextView(context).apply {
+                text = ev.location
+                setTextColor(Color.parseColor("#B0FFFFFF"))
+                textSize = baseFont * 0.8f
+                setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                maxWidth = dp(420)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = dp(17) }
+            }
+            calendarPanel.addView(loc)
+        }
+    }
+
+    /**
+     * Label for the day an event falls on: "Heute", "Morgen", or e.g. "Mo, 09.06.".
+     */
+    private fun dayLabelFor(start: String?): String {
+        val zdt = parseEventTime(start) ?: return "—"
+        val date = zdt.toLocalDate()
+        val today = java.time.LocalDate.now()
+        return when (date) {
+            today -> "Heute"
+            today.plusDays(1) -> "Morgen"
+            else -> date.format(
+                java.time.format.DateTimeFormatter.ofPattern("EEE, dd.MM.", Locale.getDefault())
+            )
+        }
+    }
+
+    /**
+     * Parse an ISO-8601 event time into a ZonedDateTime in the device's zone.
+     * Accepts offset date-times, instants (Z), and date-only all-day values.
+     */
+    private fun parseEventTime(iso: String?): java.time.ZonedDateTime? {
+        if (iso.isNullOrBlank()) return null
+        val zone = java.time.ZoneId.systemDefault()
+        return try {
+            java.time.OffsetDateTime.parse(iso).atZoneSameInstant(zone)
+        } catch (e: Exception) {
+            try {
+                java.time.Instant.parse(iso).atZone(zone)
+            } catch (e2: Exception) {
+                try {
+                    java.time.LocalDate.parse(iso).atStartOfDay(zone)
+                } catch (e3: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    // --- Notification Overlay ---
+
+    private fun buildNotificationCard() {
+        notifAccentBar = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(5), LinearLayout.LayoutParams.MATCH_PARENT)
+            setBackgroundColor(Color.parseColor("#2196F3"))
+        }
+
+        notifTitle = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        notifMessage = TextView(context).apply {
+            setTextColor(Color.parseColor("#E0FFFFFF"))
+            textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(2) }
+        }
+
+        val textColumn = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(notifTitle)
+            addView(notifMessage)
+        }
+
+        notifImage = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                marginEnd = dp(12)
+            }
+        }
+
+        notificationCard = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            visibility = View.GONE
+            clipToOutline = true
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F2212121"))  // near-opaque dark
+                cornerRadius = dp(16).toFloat()
+            }
+            elevation = dp(8).toFloat()
+            addView(notifAccentBar)
+            addView(textColumn)
+            addView(notifImage)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                val m = dp(16)
+                setMargins(m, m, m, m)
+            }
+        }
+    }
+
+    private fun showNotification(payload: NotificationPayload) {
+        if (!::notificationCard.isInitialized) return
+        Log.i(TAG, "Showing notification: '${payload.title}'")
+
+        currentNotification = payload
+        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
+
+        if (payload.sound) playNotificationSound()
+
+        val accent = parseColorOrNull(payload.color) ?: Color.parseColor("#2196F3")
+        notifAccentBar.setBackgroundColor(accent)
+
+        if (payload.title.isNullOrBlank()) {
+            notifTitle.visibility = View.GONE
+        } else {
+            notifTitle.text = payload.title
+            notifTitle.visibility = View.VISIBLE
+        }
+
+        notifMessage.text = payload.message
+
+        if (!payload.imageUrl.isNullOrBlank()) {
+            notifImage.visibility = View.VISIBLE
+            try {
+                Glide.with(context).load(payload.imageUrl).centerCrop().into(notifImage)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load notification image: ${e.message}")
+                notifImage.visibility = View.GONE
+            }
+        } else {
+            notifImage.visibility = View.GONE
+        }
+
+        // Animate in
+        notificationCard.visibility = View.VISIBLE
+        notificationVisible = true
+        notificationCard.alpha = 0f
+        notificationCard.translationY = -dp(40).toFloat()
+        notificationCard.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(250)
+            .start()
+
+        // Auto-dismiss (duration <= 0 means persistent until tap)
+        if (payload.duration > 0) {
+            val runnable = Runnable { dismissNotification() }
+            notificationDismissRunnable = runnable
+            handler.postDelayed(runnable, payload.duration * 1000L)
+        }
+    }
+
+    private fun dismissNotification() {
+        if (!::notificationCard.isInitialized) return
+        notificationVisible = false
+        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
+        notificationDismissRunnable = null
+        currentNotification = null
+
+        notificationCard.animate()
+            .alpha(0f)
+            .translationY(-dp(40).toFloat())
+            .setDuration(200)
+            .withEndAction { notificationCard.visibility = View.GONE }
+            .start()
+    }
+
+    private fun onNotificationTapped() {
+        val payload = currentNotification
+        Log.d(TAG, "Notification tapped, callback=${payload?.callbackUrl}")
+        dismissNotification()
+
+        val url = payload?.callbackUrl
+        if (url.isNullOrBlank()) return
+
+        val method = payload.callbackMethod.uppercase()
+        // Fire-and-forget on a background thread (scope may be cancelled on finish)
+        Thread {
+            try {
+                val builder = Request.Builder().url(url)
+                if (method == "GET") {
+                    builder.get()
+                } else {
+                    builder.post("{}".toRequestBody("application/json".toMediaType()))
+                }
+                httpClient.newCall(builder.build()).execute().use { response ->
+                    Log.d(TAG, "Notification callback response: ${response.code}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Notification callback failed: ${e.message}", e)
+            }
+        }.start()
+    }
+
+    private fun playNotificationSound() {
+        try {
+            val uri = android.media.RingtoneManager
+                .getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+            android.media.RingtoneManager.getRingtone(context, uri)?.play()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to play notification sound: ${e.message}")
+        }
+    }
+
+    // --- Small helpers ---
+
+    private fun dp(value: Int): Int =
+        (value * context.resources.displayMetrics.density).toInt()
+
+    private fun parseColorOrNull(hex: String?): Int? {
+        if (hex.isNullOrBlank()) return null
+        return try {
+            Color.parseColor(hex)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Hit-test a touch event (screen coords) against a visible view.
+     */
+    private fun isTouchInside(view: View, e: MotionEvent): Boolean {
+        if (view.visibility != View.VISIBLE) return false
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val x = e.rawX
+        val y = e.rawY
+        return x >= loc[0] && x <= loc[0] + view.width &&
+            y >= loc[1] && y <= loc[1] + view.height
+    }
+
     private fun formatDate(isoDate: String): String {
         return try {
             val instant = java.time.Instant.parse(isoDate)

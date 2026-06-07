@@ -25,8 +25,11 @@ import de.koshi.photodream.R
 import de.koshi.photodream.SlideshowActivity
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import de.koshi.photodream.model.CalendarData
+import de.koshi.photodream.model.CalendarEvent
 import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
+import de.koshi.photodream.model.NotificationPayload
 import de.koshi.photodream.util.BrightnessManager
 import de.koshi.photodream.util.BrightnessOverlayService
 import de.koshi.photodream.util.ConfigManager
@@ -44,6 +47,8 @@ import de.koshi.photodream.util.ConfigManager
  * - POST /refresh-config - Triggers config refresh from HA
  * - POST /next - Advances to next image
  * - POST /set-profile - Changes active profile
+ * - POST /calendar - Receive aggregated calendar events from HA
+ * - POST /notify - Show a notification overlay (with optional tap callback)
  */
 class HttpServerService : Service() {
     
@@ -105,6 +110,13 @@ class HttpServerService : Service() {
     var getStatus: (() -> DeviceStatus)? = null
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
     var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
+    var onCalendarReceived: ((List<CalendarEvent>) -> Unit)? = null
+    var onShowNotification: ((NotificationPayload) -> Unit)? = null
+
+    // Last aggregated calendar events (cached in memory so a freshly started
+    // slideshow can render them immediately after binding).
+    var lastCalendarEvents: List<CalendarEvent> = emptyList()
+        private set
     
     // Slideshow control callbacks
     var onSlideshowStart: (() -> Unit)? = null
@@ -379,6 +391,8 @@ class HttpServerService : Service() {
                     method == Method.POST && uri == "/refresh-config" -> handleRefreshConfig()
                     method == Method.POST && uri == "/next" -> handleNext()
                     method == Method.POST && uri == "/set-profile" -> handleSetProfile(session)
+                    method == Method.POST && uri == "/calendar" -> handleCalendar(session)
+                    method == Method.POST && uri == "/notify" -> handleNotify(session)
                     method == Method.POST && uri == "/prepare-update" -> handlePrepareUpdate(session)
                     
                     // Brightness control endpoints
@@ -477,6 +491,69 @@ class HttpServerService : Service() {
             }
         }
         
+        private fun handleCalendar(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+
+            val postData = body["postData"] ?: "{}"
+
+            return try {
+                val data = gson.fromJson(postData, CalendarData::class.java)
+                val events = data?.events ?: emptyList()
+                lastCalendarEvents = events
+                Log.i(TAG, "Received ${events.size} calendar events from HA")
+
+                // Notify active slideshow on main thread (if running)
+                mainHandler.post { onCalendarReceived?.invoke(events) }
+
+                jsonResponse(mapOf("success" to true, "count" to events.size))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse calendar payload: ${e.message}", e)
+                newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Invalid calendar payload: ${e.message}"
+                )
+            }
+        }
+
+        private fun handleNotify(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+
+            val postData = body["postData"] ?: "{}"
+
+            return try {
+                val payload = gson.fromJson(postData, NotificationPayload::class.java)
+                if (payload == null || payload.message.isBlank()) {
+                    return newFixedLengthResponse(
+                        Response.Status.BAD_REQUEST,
+                        MIME_PLAINTEXT,
+                        "Missing 'message' field"
+                    )
+                }
+
+                Log.i(TAG, "Received notification: '${payload.title}' / '${payload.message.take(60)}'")
+
+                if (onShowNotification == null) {
+                    Log.w(TAG, "No active slideshow bound - notification dropped")
+                }
+                mainHandler.post { onShowNotification?.invoke(payload) }
+
+                jsonResponse(mapOf(
+                    "success" to true,
+                    "shown" to (onShowNotification != null)
+                ))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse notification payload: ${e.message}", e)
+                newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Invalid notification payload: ${e.message}"
+                )
+            }
+        }
+
         private fun handlePrepareUpdate(session: IHTTPSession): Response {
             val body = mutableMapOf<String, String>()
             session.parseBody(body)
