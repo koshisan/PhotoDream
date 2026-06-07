@@ -767,8 +767,15 @@ class SlideshowController(
             meta.append("${lo.toInt()}° / ${hi.toInt()}°")
         }
         if (meta.isNotBlank()) {
-            weatherMeta.text = meta.toString()
+            val text = meta.toString()
             weatherMeta.textSize = (display.clockFontSize * 0.16f).coerceAtLeast(11f)
+            weatherMeta.text = text
+            // Reserve measured width + buffer so the trailing part (e.g. "/ 20°") isn't
+            // clipped — same WRAP_CONTENT under-measure issue as the clock.
+            val metaWidth = weatherMeta.paint.measureText(text).toInt() + dp(10)
+            weatherMeta.layoutParams = LinearLayout.LayoutParams(
+                metaWidth, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
             weatherMeta.visibility = View.VISIBLE
         } else {
             weatherMeta.visibility = View.GONE
