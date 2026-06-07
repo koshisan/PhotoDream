@@ -58,6 +58,9 @@ class HttpServerService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "photodream_server"
         
+        // Cached calendar events (survive cold start so the agenda shows immediately)
+        private const val CALENDAR_CACHE_FILE = "calendar_cache.json"
+
         // SharedPreferences for persistent update state
         private const val PREFS_NAME = "photodream_updates"
         private const val PREF_UPDATE_VERSION = "pending_update_version"
@@ -113,10 +116,31 @@ class HttpServerService : Service() {
     var onCalendarReceived: ((List<CalendarEvent>) -> Unit)? = null
     var onShowNotification: ((NotificationPayload) -> Unit)? = null
 
-    // Last aggregated calendar events (cached in memory so a freshly started
-    // slideshow can render them immediately after binding).
+    // Last aggregated calendar events (cached in memory + on disk so a freshly
+    // started slideshow can render them immediately after binding, even after a reboot).
     var lastCalendarEvents: List<CalendarEvent> = emptyList()
         private set
+
+    private fun saveCalendarEvents(events: List<CalendarEvent>) {
+        try {
+            java.io.File(filesDir, CALENDAR_CACHE_FILE).writeText(gson.toJson(events))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist calendar events: ${e.message}")
+        }
+    }
+
+    private fun loadCalendarEvents(): List<CalendarEvent> {
+        return try {
+            val file = java.io.File(filesDir, CALENDAR_CACHE_FILE)
+            if (!file.exists()) return emptyList()
+            val type = com.google.gson.reflect.TypeToken
+                .getParameterized(List::class.java, CalendarEvent::class.java).type
+            gson.fromJson<List<CalendarEvent>>(file.readText(), type) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load cached calendar events: ${e.message}")
+            emptyList()
+        }
+    }
     
     // Slideshow control callbacks
     var onSlideshowStart: (() -> Unit)? = null
@@ -232,6 +256,12 @@ class HttpServerService : Service() {
 
         // Load pending update from SharedPreferences (survives app restart)
         pendingUpdate = loadPendingUpdate()
+
+        // Load cached calendar events (survives reboot)
+        lastCalendarEvents = loadCalendarEvents()
+        if (lastCalendarEvents.isNotEmpty()) {
+            Log.i(TAG, "Loaded ${lastCalendarEvents.size} cached calendar events")
+        }
 
         // Initialize device info in status
         updateDeviceInfo()
@@ -501,6 +531,7 @@ class HttpServerService : Service() {
                 val data = gson.fromJson(postData, CalendarData::class.java)
                 val events = data?.events ?: emptyList()
                 lastCalendarEvents = events
+                saveCalendarEvents(events)
                 Log.i(TAG, "Received ${events.size} calendar events from HA")
 
                 // Notify active slideshow on main thread (if running)

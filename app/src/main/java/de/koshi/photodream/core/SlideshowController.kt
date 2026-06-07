@@ -18,6 +18,11 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.animation.ObjectAnimator
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import android.view.animation.LinearInterpolator
 import android.view.animation.OvershootInterpolator
 import androidx.core.content.ContextCompat
@@ -60,10 +65,14 @@ class SlideshowController(
         private val GOLD = Color.parseColor("#E0C16A")          // warm gold day labels
         private val DEFAULT_NC = Color.parseColor("#5B8DEF")    // fallback notification color
         private val DOT_DEFAULT = Color.parseColor("#9AA3AD")   // fallback calendar dot
-        private val NOTIF_BG = Color.parseColor("#B312141A")    // ~0.70 alpha
-        private val NOTIF_BORDER = Color.parseColor("#29FFFFFF") // ~0.16
-        private val AURORA_BG = Color.parseColor("#A612141A")    // ~0.65 alpha
-        private val AURORA_BORDER = Color.parseColor("#24FFFFFF") // ~0.14
+        private val NOTIF_BORDER = Color.parseColor("#29FFFFFF") // ~0.16 hairline
+        private val AURORA_BORDER = Color.parseColor("#24FFFFFF") // ~0.14 hairline
+        // Frosted fill: more translucent when a real backdrop blur is available (API 31+),
+        // more opaque otherwise so text stays readable over busy photos.
+        private val NOTIF_FILL_BLUR = Color.parseColor("#8012141A")   // 0.50
+        private val NOTIF_FILL_SOLID = Color.parseColor("#C012141A")  // 0.75
+        private val AGENDA_FILL_BLUR = Color.parseColor("#7312141A")  // 0.45
+        private val AGENDA_FILL_SOLID = Color.parseColor("#A612141A") // 0.65
     }
     
     // UI components
@@ -78,9 +87,14 @@ class SlideshowController(
     private lateinit var weatherTemp: TextView
     private lateinit var updateBanner: TextView       // "Update verfügbar" banner
     private lateinit var infoPanel: LinearLayout      // Image info panel (long-press)
-    private lateinit var calendarPanel: LinearLayout  // Agenda card (frosted)
+    private lateinit var calendarCard: FrameLayout    // Agenda card (frosted, positioned)
+    private lateinit var calendarPanel: LinearLayout  // Agenda content (inside the card)
+    private lateinit var calendarTint: View           // translucent frosted fill (agenda)
+    private var calendarBackdrop: ImageView? = null   // blurred photo behind agenda (API 31+)
     private lateinit var topScrim: View               // legibility gradient while a notification is up
     private lateinit var notificationCard: FrameLayout // HA-style notification overlay (Aurora)
+    private lateinit var notifTint: View              // translucent frosted fill (notification)
+    private var notifBackdrop: ImageView? = null      // blurred photo behind notification (API 31+)
     private lateinit var notifIconTile: FrameLayout
     private lateinit var notifIcon: TextView          // MDI glyph
     private lateinit var notifTitle: TextView
@@ -406,14 +420,35 @@ class SlideshowController(
             }
         }
         
-        // Agenda card (frosted "Aurora" style) - upcoming calendar events from HA
+        // Agenda card (frosted "Aurora" style) - upcoming calendar events from HA.
+        // Layered: [blurred backdrop] -> [translucent tint] -> [content panel]
         calendarPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(22), dp(24), dp(20))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        calendarTint = View(context).apply {
+            setBackgroundColor(if (blurSupported) AGENDA_FILL_BLUR else AGENDA_FILL_SOLID)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        calendarCard = FrameLayout(context).apply {
             visibility = View.GONE
             clipToOutline = true
             elevation = dp(10).toFloat()
-            setPadding(dp(24), dp(22), dp(24), dp(20))
-            background = frostedBackground(AURORA_BG, AURORA_BORDER, dp(24).toFloat())
+            background = roundedTransparent(dp(24).toFloat())
+            foreground = roundedBorder(dp(24).toFloat(), AURORA_BORDER)
+            if (blurSupported) {
+                calendarBackdrop = createBackdrop(24)
+                addView(calendarBackdrop)
+            }
+            addView(calendarTint)
+            addView(calendarPanel)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
@@ -444,7 +479,7 @@ class SlideshowController(
         container.addView(imageContainer)
         container.addView(topScrim)
         container.addView(overlayContainer)
-        container.addView(calendarPanel)
+        container.addView(calendarCard)
         container.addView(infoPanel)
         container.addView(updateBanner)
         container.addView(notificationCard)  // always on top
@@ -459,6 +494,7 @@ class SlideshowController(
                 Log.d(TAG, "Image shown: ${asset.id}")
                 reportStatusToHA()
                 httpService?.updateStatus(getCurrentStatus())
+                updateBackdrops()
             }
             
             onImageError = { error ->
@@ -1294,11 +1330,11 @@ class SlideshowController(
     private fun setupCalendar(display: DisplayConfig) {
         val cal = display.calendar
         if (cal == null || !cal.enabled) {
-            calendarPanel.visibility = View.GONE
+            calendarCard.visibility = View.GONE
             return
         }
 
-        val lp = calendarPanel.layoutParams as FrameLayout.LayoutParams
+        val lp = calendarCard.layoutParams as FrameLayout.LayoutParams
         val margin = dp(40)
         lp.setMargins(margin, margin, margin, margin)
         // Width scales with the screen (design: ~430px on a 1280px display)
@@ -1314,7 +1350,7 @@ class SlideshowController(
             6 -> Gravity.CENTER
             else -> Gravity.BOTTOM or Gravity.END
         }
-        calendarPanel.layoutParams = lp
+        calendarCard.layoutParams = lp
 
         renderCalendar()
     }
@@ -1335,7 +1371,7 @@ class SlideshowController(
         calendarPanel.removeAllViews()
 
         if (cal == null || !cal.enabled || calendarEvents.isEmpty()) {
-            calendarPanel.visibility = View.GONE
+            calendarCard.visibility = View.GONE
             return
         }
 
@@ -1361,7 +1397,8 @@ class SlideshowController(
             addAgendaEvent(ev, baseFont, cal.showLocation)
         }
 
-        calendarPanel.visibility = View.VISIBLE
+        calendarCard.visibility = View.VISIBLE
+        container.post { updateBackdrop(calendarBackdrop) }
     }
 
     private fun addAgendaHeader(total: Int) {
@@ -1672,11 +1709,25 @@ class SlideshowController(
             }
         }
 
+        notifTint = View(context).apply {
+            setBackgroundColor(if (blurSupported) NOTIF_FILL_BLUR else NOTIF_FILL_SOLID)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
         notificationCard = FrameLayout(context).apply {
             visibility = View.GONE
             clipToOutline = true
             elevation = dp(12).toFloat()
-            background = frostedBackground(NOTIF_BG, NOTIF_BORDER, dp(22).toFloat())
+            background = roundedTransparent(dp(22).toFloat())
+            foreground = roundedBorder(dp(22).toFloat(), NOTIF_BORDER)
+            if (blurSupported) {
+                notifBackdrop = createBackdrop(22)
+                addView(notifBackdrop)
+            }
+            addView(notifTint)
             addView(row)
             addView(notifProgressTrack)
         }
@@ -1766,7 +1817,9 @@ class SlideshowController(
             .translationY(0f)
             .setDuration(500)
             .setInterpolator(OvershootInterpolator(0.9f))
+            .withEndAction { updateBackdrop(notifBackdrop) }
             .start()
+        container.post { updateBackdrop(notifBackdrop) }
 
         if (durationMs > 0) {
             val runnable = Runnable { dismissNotification() }
@@ -1851,13 +1904,107 @@ class SlideshowController(
     private fun withAlpha(color: Int, alpha: Int): Int =
         (color and 0x00FFFFFF) or ((alpha and 0xFF) shl 24)
 
-    /** Frosted-glass card background: translucent fill + hairline border + rounded corners. */
-    private fun frostedBackground(fill: Int, stroke: Int, radius: Float): GradientDrawable =
+    /** Whether a real backdrop blur (RenderEffect) is available. */
+    private val blurSupported: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+    /** Transparent rounded drawable (defines the rounded outline for clipping). */
+    private fun roundedTransparent(radius: Float): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radius
-            setColor(fill)
+            setColor(Color.TRANSPARENT)
+        }
+
+    /** Rounded hairline border (used as a card foreground, drawn over the content). */
+    private fun roundedBorder(radius: Float, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.TRANSPARENT)
             setStroke(dp(1), stroke)
         }
+
+    /** A blurred ImageView (API 31+) used as a frosted-glass backdrop inside a card. */
+    private fun createBackdrop(radiusDp: Int): ImageView =
+        ImageView(context).apply {
+            scaleType = ImageView.ScaleType.MATRIX
+            clipToOutline = true
+            background = roundedTransparent(dp(radiusDp).toFloat())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                setRenderEffect(
+                    RenderEffect.createBlurEffect(
+                        dp(24).toFloat(), dp(24).toFloat(), Shader.TileMode.CLAMP
+                    )
+                )
+            }
+        }
+
+    /**
+     * Paint the current slideshow photo into a card's backdrop, offset so the slice
+     * under the card aligns with the photo behind it (heavy blur hides any drift).
+     */
+    private fun updateBackdrop(backdrop: ImageView?) {
+        if (backdrop == null || !blurSupported) return
+        val card = backdrop.parent as? View ?: return
+        if (card.visibility != View.VISIBLE) return
+        if (backdrop.width <= 0 || backdrop.height <= 0) return
+
+        val bmp = (if (::renderer.isInitialized) renderer.currentBitmap() else null) ?: return
+
+        val cw = container.width.toFloat()
+        val ch = container.height.toFloat()
+        if (cw <= 0f || ch <= 0f) return
+
+        val loc = IntArray(2); backdrop.getLocationInWindow(loc)
+        val cloc = IntArray(2); container.getLocationInWindow(cloc)
+        val offX = (loc[0] - cloc[0]).toFloat()
+        val offY = (loc[1] - cloc[1]).toFloat()
+
+        // Use an own downscaled copy: decouples from Glide's bitmap pool (avoids
+        // "recycled bitmap" crashes) and makes the blur cheaper.
+        val scaled = try {
+            downscale(bmp, 480)
+        } catch (e: Exception) {
+            Log.e(TAG, "Backdrop downscale failed: ${e.message}"); return
+        }
+
+        val bw = scaled.width.toFloat()
+        val bh = scaled.height.toFloat()
+        val scale = maxOf(cw / bw, ch / bh)
+        val dx = (cw - bw * scale) / 2f
+        val dy = (ch - bh * scale) / 2f
+
+        val old = (backdrop.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        backdrop.setImageBitmap(scaled)
+        backdrop.imageMatrix = Matrix().apply {
+            setScale(scale, scale)
+            postTranslate(dx - offX, dy - offY)
+        }
+        if (old != null && old != scaled && !old.isRecycled) old.recycle()
+    }
+
+    /** Downscale a bitmap so its largest side is at most [maxDim] (returns an own copy). */
+    private fun downscale(src: Bitmap, maxDim: Int): Bitmap {
+        val largest = maxOf(src.width, src.height)
+        if (largest <= maxDim) {
+            return src.copy(src.config ?: Bitmap.Config.ARGB_8888, false)
+        }
+        val s = maxDim.toFloat() / largest
+        return Bitmap.createScaledBitmap(
+            src,
+            (src.width * s).toInt().coerceAtLeast(1),
+            (src.height * s).toInt().coerceAtLeast(1),
+            true
+        )
+    }
+
+    private fun updateBackdrops() {
+        updateBackdrop(calendarBackdrop)
+        updateBackdrop(notifBackdrop)
+    }
 
     private fun parseColorOrNull(hex: String?): Int? {
         if (hex.isNullOrBlank()) return null

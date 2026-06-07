@@ -688,6 +688,17 @@ DefaultLoadControl.Builder()
     }
 
     /**
+     * The currently displayed image bitmap (front-most visible ImageView), or null
+     * if none / not a bitmap. Used to render frosted-glass backdrops behind overlays.
+     */
+    fun currentBitmap(): android.graphics.Bitmap? {
+        val primary = if (frontView.alpha >= backView.alpha) frontView else backView
+        return (primary.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            ?: (frontView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            ?: (backView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    }
+
+    /**
      * Data class to store pan animation bounds.
      */
     private data class PanBounds(
