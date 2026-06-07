@@ -2087,6 +2087,9 @@ class SlideshowController(
             if (::notifTint.isInitialized) notifTint.setBackgroundColor(NOTIF_FILL_OPAQUE)
             calendarBackdrop?.visibility = View.INVISIBLE
             notifBackdrop?.visibility = View.INVISIBLE
+            // No photo to sample -> neutral white hairline
+            applyCardBorder(calendarCard, AURORA_BORDER)
+            applyCardBorder(notificationCard, NOTIF_BORDER)
             return
         }
         if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_BLUR)
@@ -2108,9 +2111,40 @@ class SlideshowController(
         backdropSourceScale = full.width.toFloat() / out.width.toFloat()
         setBackdropBitmap(calendarBackdrop, out)
         setBackdropBitmap(notifBackdrop, out)
+
+        // Adaptive outline: tint the hairline with the (lightened) average background
+        // color so the border "hangs on" the photo behind it.
+        val rim = adaptiveRim(averageColor(out))
+        applyCardBorder(calendarCard, rim)
+        applyCardBorder(notificationCard, rim)
+
         out.recycle()
 
         if (::renderer.isInitialized) updateBackdropMatrices(renderer.currentImageMatrix())
+    }
+
+    /** Average color of a bitmap via a 1x1 bilinear downscale (cheap). */
+    private fun averageColor(bmp: Bitmap): Int {
+        val one = Bitmap.createScaledBitmap(bmp, 1, 1, true)
+        val c = one.getPixel(0, 0)
+        if (one != bmp) one.recycle()
+        return c
+    }
+
+    /** Lighten a color toward white and apply a soft alpha for a glassy, tinted edge. */
+    private fun adaptiveRim(color: Int): Int {
+        val r = (Color.red(color) + (255 - Color.red(color)) * 0.45f).toInt()
+        val g = (Color.green(color) + (255 - Color.green(color)) * 0.45f).toInt()
+        val b = (Color.blue(color) + (255 - Color.blue(color)) * 0.45f).toInt()
+        return Color.argb(0x70, r, g, b)
+    }
+
+    /** Update a card's hairline (foreground) stroke color. */
+    private fun applyCardBorder(card: FrameLayout, color: Int) {
+        (card.foreground as? GradientDrawable)?.let {
+            it.setStroke(dp(1), color)
+            card.invalidate()
+        }
     }
 
     private fun setBackdropBitmap(backdrop: ImageView?, bmp: Bitmap) {
