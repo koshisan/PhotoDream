@@ -67,9 +67,15 @@ data class WeatherConfig(
     val condition: String? = null, // Current condition: sunny, cloudy, rainy, etc.
     
     val temperature: Float? = null, // Current temperature
-    
+
     @SerializedName("temperature_unit")
-    val temperatureUnit: String = "°C" // °C or °F
+    val temperatureUnit: String = "°C", // °C or °F
+
+    @SerializedName("temp_low")
+    val tempLow: Float? = null,  // Today's forecast low (shown in the meta line)
+
+    @SerializedName("temp_high")
+    val tempHigh: Float? = null  // Today's forecast high
 )
 
 /**

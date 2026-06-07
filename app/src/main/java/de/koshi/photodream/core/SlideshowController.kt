@@ -28,6 +28,7 @@ import android.view.animation.OvershootInterpolator
 import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.google.gson.Gson
+import de.koshi.photodream.util.Fonts
 import de.koshi.photodream.util.ImageBlur
 import de.koshi.photodream.util.MdiIcons
 import de.koshi.photodream.R
@@ -305,8 +306,11 @@ class SlideshowController(
         // mainRow (horizontal, bottom-aligned)
         // ├── leftColumn (vertical): clock (thin), date (weekday + date)
         // └── rightColumn (horizontal): weather icon + [temp, meta]
-        val thin = weightedSans(200)   // clock (mockup: 200)
-        val light = weightedSans(300)  // temperature (mockup: 300)
+        // Bundled variable font (Roboto Flex) at exact weights, per the design handoff.
+        val clockTypeface = Fonts.weight(context, 200, tabular = true)
+        val dateTypeface = Fonts.weight(context, 400)
+        val tempTypeface = Fonts.weight(context, 300, tabular = true)
+        val metaTypeface = Fonts.weight(context, 400, tabular = true)
 
         mainRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -325,7 +329,7 @@ class SlideshowController(
         clockView = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 32f
-            typeface = thin
+            typeface = clockTypeface
             // NOTE: no negative letterSpacing / includeFontPadding=false here — both
             // cause TextView to clip large glyphs (the "18:0" bug).
             setShadowLayer(16f, 0f, 2f, withAlpha(Color.BLACK, 0x73))
@@ -334,6 +338,7 @@ class SlideshowController(
         dateView = TextView(context).apply {
             setTextColor(withAlpha(Color.WHITE, 0xEB))
             textSize = 18f
+            typeface = dateTypeface
             letterSpacing = 0.01f
             setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
             visibility = View.GONE
@@ -355,13 +360,14 @@ class SlideshowController(
         weatherTemp = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 18f
-            typeface = light
+            typeface = tempTypeface
             setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
         }
 
         weatherMeta = TextView(context).apply {
             setTextColor(withAlpha(Color.WHITE, 0xC7))
             textSize = 13f
+            typeface = metaTypeface
             setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
             visibility = View.GONE
         }
@@ -748,9 +754,18 @@ class SlideshowController(
             tempWidth, LinearLayout.LayoutParams.WRAP_CONTENT
         )
 
-        val meta = conditionLabel(weather.condition)
+        // Meta line: "Regen · 14° / 21°"  (condition · day low / day high)
+        val meta = StringBuilder()
+        val cond = conditionLabel(weather.condition)
+        if (cond.isNotBlank()) meta.append(cond)
+        val lo = weather.tempLow
+        val hi = weather.tempHigh
+        if (lo != null && hi != null) {
+            if (meta.isNotEmpty()) meta.append("  ·  ")
+            meta.append("${lo.toInt()}° / ${hi.toInt()}°")
+        }
         if (meta.isNotBlank()) {
-            weatherMeta.text = meta
+            weatherMeta.text = meta.toString()
             weatherMeta.textSize = (display.clockFontSize * 0.16f).coerceAtLeast(11f)
             weatherMeta.visibility = View.VISIBLE
         } else {
@@ -778,18 +793,21 @@ class SlideshowController(
      * Map weather condition string to drawable resource
      */
     private fun getWeatherIconResource(condition: String?): Int {
+        // Lucide line icons mapped from HA weather states (see design handoff).
         return when (condition?.lowercase()) {
-            "sunny", "clear", "clear-night" -> R.drawable.ic_weather_sunny
-            "partlycloudy", "partly-cloudy", "partly_cloudy" -> R.drawable.ic_weather_partlycloudy
-            "cloudy" -> R.drawable.ic_weather_cloudy
-            "rainy", "rain", "pouring" -> R.drawable.ic_weather_rainy
-            "snowy", "snow", "snowy-rainy" -> R.drawable.ic_weather_snowy
-            "windy", "wind" -> R.drawable.ic_weather_windy
-            "fog", "foggy", "hazy" -> R.drawable.ic_weather_foggy
-            "lightning", "lightning-rainy", "thunderstorm" -> R.drawable.ic_weather_thunderstorm
-            "hail" -> R.drawable.ic_weather_snowy
-            "exceptional" -> R.drawable.ic_weather_default
-            else -> R.drawable.ic_weather_default
+            "sunny", "clear" -> R.drawable.ic_wx_sun
+            "clear-night" -> R.drawable.ic_wx_moon
+            "partlycloudy", "partly-cloudy", "partly_cloudy" -> R.drawable.ic_wx_cloud_sun
+            "cloudy" -> R.drawable.ic_wx_cloudy
+            "fog", "foggy", "hazy" -> R.drawable.ic_wx_cloud_fog
+            "rainy", "rain" -> R.drawable.ic_wx_cloud_rain
+            "pouring" -> R.drawable.ic_wx_cloud_rain_wind
+            "lightning", "lightning-rainy", "thunderstorm" -> R.drawable.ic_wx_cloud_lightning
+            "snowy", "snow" -> R.drawable.ic_wx_cloud_snow
+            "hail", "snowy-rainy" -> R.drawable.ic_wx_cloud_hail
+            "windy", "wind", "windy-variant" -> R.drawable.ic_wx_wind
+            "exceptional" -> R.drawable.ic_wx_cloud
+            else -> R.drawable.ic_wx_cloud
         }
     }
     
@@ -1984,17 +2002,6 @@ class SlideshowController(
 
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
-
-    /** Sans-serif at an exact weight (API 28+); approximated via named families below. */
-    private fun weightedSans(weight: Int): android.graphics.Typeface =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, weight, false)
-        } else when {
-            weight <= 250 -> android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL)
-            weight <= 350 -> android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
-            weight >= 600 -> android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-            else -> android.graphics.Typeface.SANS_SERIF
-        }
 
     /** Apply an explicit alpha (0..255) to an opaque color. */
     private fun withAlpha(color: Int, alpha: Int): Int =
