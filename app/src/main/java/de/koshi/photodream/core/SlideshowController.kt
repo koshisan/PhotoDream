@@ -28,6 +28,7 @@ import android.view.animation.OvershootInterpolator
 import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.google.gson.Gson
+import de.koshi.photodream.util.ImageBlur
 import de.koshi.photodream.util.MdiIcons
 import de.koshi.photodream.R
 import de.koshi.photodream.api.ImmichClient
@@ -443,25 +444,22 @@ class SlideshowController(
                 FrameLayout.LayoutParams.WRAP_CONTENT
             )
         }
+        // Decorative layers start at 0x0 so they don't inflate the WRAP_CONTENT card;
+        // syncCardLayers() resizes them to the card after layout.
         calendarTint = View(context).apply {
-            setBackgroundColor(if (blurSupported) AGENDA_FILL_BLUR else AGENDA_FILL_SOLID)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
+            setBackgroundColor(AGENDA_FILL_BLUR)
+            layoutParams = FrameLayout.LayoutParams(0, 0)
         }
+        calendarBackdrop = createBackdrop(24)
         calendarCard = FrameLayout(context).apply {
             visibility = View.GONE
             clipToOutline = true
             elevation = dp(10).toFloat()
             background = roundedTransparent(dp(24).toFloat())
             foreground = roundedBorder(dp(24).toFloat(), AURORA_BORDER)
-            if (blurSupported) {
-                calendarBackdrop = createBackdrop(24)
-                addView(calendarBackdrop)
-            }
-            addView(calendarTint)
-            addView(calendarPanel)
+            addView(calendarBackdrop)  // blurred photo
+            addView(calendarTint)      // frosted tint
+            addView(calendarPanel)     // content
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
@@ -471,6 +469,7 @@ class SlideshowController(
                 gravity = Gravity.BOTTOM or Gravity.END
             }
         }
+        syncCardLayers(calendarCard, calendarTint, calendarBackdrop)
 
         // Clock legibility scrim - dynamically positioned to follow the clock (set in setupClock)
         clockScrim = View(context).apply {
@@ -606,6 +605,13 @@ class SlideshowController(
                     httpService?.updateConfig(cfg)
                     immichClient = ImmichClient(cfg.immich)
                     setupClock(cfg.display)
+                    // Pull any calendar events the HTTP service already has cached
+                    // (covers the case where the service bound before config loaded).
+                    if (calendarEvents.isEmpty()) {
+                        httpService?.lastCalendarEvents?.let {
+                            if (it.isNotEmpty()) calendarEvents = it
+                        }
+                    }
                     setupCalendar(cfg.display)
                     applyPanSpeed(cfg.display.panSpeed)
                     loadPlaylist(cfg.profile)
@@ -627,6 +633,9 @@ class SlideshowController(
 
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
+        // Negative letterSpacing can clip the trailing glyph on WRAP_CONTENT views
+        // (e.g. "18:00" -> "18:0"); add end padding that scales with the font size.
+        clockView.setPadding(0, 0, (clockView.textSize * 0.1f).toInt(), 0)
 
         // Date (weekday + date), sized relative to the clock
         if (display.date) {
@@ -719,6 +728,7 @@ class SlideshowController(
         val temp = weather.temperature
         weatherTemp.text = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         weatherTemp.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(16f)
+        weatherTemp.setPadding(0, 0, (weatherTemp.textSize * 0.08f).toInt(), 0)
 
         val meta = conditionLabel(weather.condition)
         if (meta.isNotBlank()) {
@@ -1769,13 +1779,13 @@ class SlideshowController(
             }
         }
 
+        // Decorative layers start at 0x0 so they don't inflate the WRAP_CONTENT card;
+        // syncCardLayers() resizes them to the card after layout.
         notifTint = View(context).apply {
-            setBackgroundColor(if (blurSupported) NOTIF_FILL_BLUR else NOTIF_FILL_SOLID)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
+            setBackgroundColor(NOTIF_FILL_BLUR)
+            layoutParams = FrameLayout.LayoutParams(0, 0)
         }
+        notifBackdrop = createBackdrop(22)
 
         notificationCard = FrameLayout(context).apply {
             visibility = View.GONE
@@ -1783,12 +1793,9 @@ class SlideshowController(
             elevation = dp(12).toFloat()
             background = roundedTransparent(dp(22).toFloat())
             foreground = roundedBorder(dp(22).toFloat(), NOTIF_BORDER)
-            if (blurSupported) {
-                notifBackdrop = createBackdrop(22)
-                addView(notifBackdrop)
-            }
-            addView(notifTint)
-            addView(row)
+            addView(notifBackdrop)  // blurred photo
+            addView(notifTint)      // frosted tint
+            addView(row)            // content
             addView(notifProgressTrack)
         }
 
@@ -1801,6 +1808,7 @@ class SlideshowController(
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             topMargin = dp(20)
         }
+        syncCardLayers(notificationCard, notifTint, notifBackdrop)
     }
 
     private fun showNotification(payload: NotificationPayload) {
@@ -1964,9 +1972,32 @@ class SlideshowController(
     private fun withAlpha(color: Int, alpha: Int): Int =
         (color and 0x00FFFFFF) or ((alpha and 0xFF) shl 24)
 
-    /** Whether a real backdrop blur (RenderEffect) is available. */
-    private val blurSupported: Boolean
+    /** GPU backdrop blur (RenderEffect) available? Otherwise we software-blur the bitmap. */
+    private val gpuBlur: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+    /**
+     * Resize a card's decorative layers (tint + blurred backdrop) to match the card
+     * once it is laid out. The layers start at 0x0 so they never inflate the card's
+     * WRAP_CONTENT height; the content child alone determines the card size.
+     */
+    private fun syncCardLayers(card: FrameLayout, tint: View, backdrop: ImageView?) {
+        card.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+            val w = right - left
+            val h = bottom - top
+            if (w <= 0 || h <= 0) return@addOnLayoutChangeListener
+            for (layer in listOfNotNull<View>(tint, backdrop)) {
+                val lp = layer.layoutParams
+                if (lp.width != w || lp.height != h) {
+                    lp.width = w
+                    lp.height = h
+                    layer.layoutParams = lp
+                }
+            }
+            // Repaint the backdrop slice after the layers have been laid out.
+            backdrop?.let { bd -> bd.post { updateBackdrop(bd) } }
+        }
+    }
 
     /** Transparent rounded drawable (defines the rounded outline for clipping). */
     private fun roundedTransparent(radius: Float): GradientDrawable =
@@ -1983,17 +2014,18 @@ class SlideshowController(
             setStroke(dp(1), stroke)
         }
 
-    /** A blurred ImageView (API 31+) used as a frosted-glass backdrop inside a card. */
+    /**
+     * Frosted-glass backdrop ImageView. On API 31+ a GPU RenderEffect blur is applied;
+     * on older devices the bitmap is software-blurred in [updateBackdrop] instead.
+     * Starts at 0x0 (sized by [syncCardLayers]) so it never inflates the card.
+     */
     private fun createBackdrop(radiusDp: Int): ImageView =
         ImageView(context).apply {
             scaleType = ImageView.ScaleType.MATRIX
             clipToOutline = true
             background = roundedTransparent(dp(radiusDp).toFloat())
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            layoutParams = FrameLayout.LayoutParams(0, 0)
+            if (gpuBlur) {
                 setRenderEffect(
                     RenderEffect.createBlurEffect(
                         dp(24).toFloat(), dp(24).toFloat(), Shader.TileMode.CLAMP
@@ -2007,7 +2039,7 @@ class SlideshowController(
      * under the card aligns with the photo behind it (heavy blur hides any drift).
      */
     private fun updateBackdrop(backdrop: ImageView?) {
-        if (backdrop == null || !blurSupported) return
+        if (backdrop == null) return
         val card = backdrop.parent as? View ?: return
         if (card.visibility != View.VISIBLE) return
         if (backdrop.width <= 0 || backdrop.height <= 0) return
@@ -2023,27 +2055,35 @@ class SlideshowController(
         val offX = (loc[0] - cloc[0]).toFloat()
         val offY = (loc[1] - cloc[1]).toFloat()
 
-        // Use an own downscaled copy: decouples from Glide's bitmap pool (avoids
-        // "recycled bitmap" crashes) and makes the blur cheaper.
-        val scaled = try {
-            downscale(bmp, 480)
+        // Own downscaled copy: decouples from Glide's bitmap pool (avoids "recycled
+        // bitmap" crashes) and makes blurring cheap. On API 31+ the GPU RenderEffect
+        // blurs the view; otherwise we software-blur the downscaled copy here.
+        val out: Bitmap = try {
+            val scaled = downscale(bmp, 480)
+            if (gpuBlur) {
+                scaled
+            } else {
+                val blurred = ImageBlur.stackBlur(scaled, 18)
+                if (blurred !== scaled) scaled.recycle()
+                blurred
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Backdrop downscale failed: ${e.message}"); return
+            Log.e(TAG, "Backdrop render failed: ${e.message}"); return
         }
 
-        val bw = scaled.width.toFloat()
-        val bh = scaled.height.toFloat()
+        val bw = out.width.toFloat()
+        val bh = out.height.toFloat()
         val scale = maxOf(cw / bw, ch / bh)
         val dx = (cw - bw * scale) / 2f
         val dy = (ch - bh * scale) / 2f
 
         val old = (backdrop.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-        backdrop.setImageBitmap(scaled)
+        backdrop.setImageBitmap(out)
         backdrop.imageMatrix = Matrix().apply {
             setScale(scale, scale)
             postTranslate(dx - offX, dy - offY)
         }
-        if (old != null && old != scaled && !old.isRecycled) old.recycle()
+        if (old != null && old != out && !old.isRecycled) old.recycle()
     }
 
     /** Downscale a bitmap so its largest side is at most [maxDim] (returns an own copy). */
