@@ -103,7 +103,6 @@ class SlideshowController(
     private lateinit var notifIcon: TextView          // MDI glyph
     private lateinit var notifTitle: TextView
     private lateinit var notifMessage: TextView
-    private lateinit var notifTime: TextView
     private lateinit var notifImage: ImageView
     private lateinit var notifProgressFill: View
     private lateinit var notifProgressTrack: View
@@ -1758,20 +1757,6 @@ class SlideshowController(
             }
         }
 
-        notifTime = TextView(context).apply {
-            text = "jetzt"
-            setTextColor(withAlpha(Color.WHITE, 0x99))
-            textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.TOP
-                marginStart = dp(14)
-                topMargin = dp(2)
-            }
-        }
-
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1783,7 +1768,6 @@ class SlideshowController(
             addView(notifIconTile)
             addView(body)
             addView(notifImage)
-            addView(notifTime)
         }
 
         // Timer/progress bar pinned to the bottom (drains over the display duration)
