@@ -74,6 +74,10 @@ class SlideshowRenderer(
     var onImageShown: ((Asset) -> Unit)? = null
     var onImageError: ((String) -> Unit)? = null
 
+    // Called on every pan animation frame with the current image matrix (full bitmap
+    // -> screen). Lets overlays mirror the Ken Burns pan smoothly for frosted backdrops.
+    var onPanFrame: ((Matrix) -> Unit)? = null
+
     init {
         // Create two ImageViews
         imageViewA = createImageView()
@@ -659,6 +663,7 @@ DefaultLoadControl.Builder()
                 newMatrix.setScale(bounds.scale, bounds.scale)
                 newMatrix.postTranslate(newX, newY)
                 imageView.imageMatrix = newMatrix
+                onPanFrame?.invoke(newMatrix)
             }
         }
 
@@ -696,6 +701,12 @@ DefaultLoadControl.Builder()
         return (primary.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
             ?: (frontView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
             ?: (backView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    }
+
+    /** Current image matrix (full bitmap -> screen) of the front-most image view. */
+    fun currentImageMatrix(): Matrix {
+        val primary = if (frontView.alpha >= backView.alpha) frontView else backView
+        return Matrix(primary.imageMatrix)
     }
 
     /**
