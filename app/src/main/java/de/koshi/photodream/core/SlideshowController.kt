@@ -78,13 +78,15 @@ class SlideshowController(
     // UI components
     private lateinit var imageContainer: FrameLayout
     private lateinit var overlayContainer: FrameLayout
-    private lateinit var mainRow: LinearLayout        // Horizontal: [leftCol] [rightCol]
+    private lateinit var clockScrim: View             // legibility gradient that follows the clock
+    private lateinit var mainRow: LinearLayout        // Horizontal: [clock block] [weather block]
     private lateinit var leftColumn: LinearLayout     // Vertical: clock, date
-    private lateinit var rightColumn: LinearLayout    // Vertical: weather icon, temp
+    private lateinit var rightColumn: LinearLayout    // Horizontal: weather icon + (temp, meta)
     private lateinit var clockView: TextView
     private lateinit var dateView: TextView
     private lateinit var weatherIcon: ImageView
     private lateinit var weatherTemp: TextView
+    private lateinit var weatherMeta: TextView
     private lateinit var updateBanner: TextView       // "Update verfügbar" banner
     private lateinit var infoPanel: LinearLayout      // Image info panel (long-press)
     private lateinit var calendarCard: FrameLayout    // Agenda card (frosted, positioned)
@@ -295,84 +297,95 @@ class SlideshowController(
             visibility = View.GONE
         }
         
-        // Layout structure:
-        // mainRow (horizontal)
-        // ├── leftColumn (vertical): clock, date
-        // └── rightColumn (vertical): weather icon, temp
-        //
-        // With date:    [Clock]  [Icon]
-        //               [Date]   [Temp]
-        //
-        // Without date: [Clock]  [Icon+Temp]
-        
+        // Clean "Aurora" info cluster (design): thin display typo, carried by a scrim.
+        // mainRow (horizontal, bottom-aligned)
+        // ├── leftColumn (vertical): clock (thin), date (weekday + date)
+        // └── rightColumn (horizontal): weather icon + [temp, meta]
+        val thin = android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL)
+        val light = android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
+
         mainRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.BOTTOM  // align-items: flex-end
         }
-        
-        // Left column: Clock + Date
+
         leftColumn = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.START
         }
-        
+
         clockView = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 32f
-            setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            gravity = Gravity.CENTER
+            typeface = thin
+            letterSpacing = -0.03f
+            includeFontPadding = false
+            setShadowLayer(30f, 0f, 2f, withAlpha(Color.BLACK, 0x73))
         }
-        
+
         dateView = TextView(context).apply {
-            setTextColor(Color.WHITE)
+            setTextColor(withAlpha(Color.WHITE, 0xEB))
             textSize = 18f
-            setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            gravity = Gravity.CENTER
+            letterSpacing = 0.01f
+            setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
             visibility = View.GONE
-            // MATCH_PARENT width = same width as clock (column width)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            ).apply { topMargin = dp(8) }
         }
-        
+
         leftColumn.addView(clockView)
         leftColumn.addView(dateView)
-        
-        // Right column: Weather Icon + Temp
-        rightColumn = LinearLayout(context).apply {
+
+        // Weather block: [icon] [temp / meta]
+        weatherIcon = ImageView(context).apply {
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+
+        weatherTemp = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            typeface = light
+            letterSpacing = -0.01f
+            includeFontPadding = false
+            setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
+        }
+
+        weatherMeta = TextView(context).apply {
+            setTextColor(withAlpha(Color.WHITE, 0xC7))
+            textSize = 13f
+            setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
+            visibility = View.GONE
+        }
+
+        val weatherTextCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.START
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(13) }
+            addView(weatherTemp)
+            addView(weatherMeta)
+        }
+
+        rightColumn = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                marginStart = 32
+                marginStart = dp(30)
+                bottomMargin = dp(8)  // baseline-ish alignment with the date
             }
+            addView(weatherIcon)
+            addView(weatherTextCol)
         }
-        
-        weatherIcon = ImageView(context).apply {
-            setColorFilter(Color.WHITE)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        
-        weatherTemp = TextView(context).apply {
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-            // MATCH_PARENT width = same width as weather icon (column width)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        
-        rightColumn.addView(weatherIcon)
-        rightColumn.addView(weatherTemp)
-        
+
         mainRow.addView(leftColumn)
         mainRow.addView(rightColumn)
         overlayContainer.addView(mainRow)
@@ -459,6 +472,11 @@ class SlideshowController(
             }
         }
 
+        // Clock legibility scrim - dynamically positioned to follow the clock (set in setupClock)
+        clockScrim = View(context).apply {
+            visibility = View.GONE
+        }
+
         // Top legibility scrim (only visible while a notification is shown)
         topScrim = View(context).apply {
             visibility = View.GONE
@@ -477,6 +495,7 @@ class SlideshowController(
         buildNotificationCard()
 
         container.addView(imageContainer)
+        container.addView(clockScrim)
         container.addView(topScrim)
         container.addView(overlayContainer)
         container.addView(calendarCard)
@@ -602,99 +621,129 @@ class SlideshowController(
     private fun setupClock(display: DisplayConfig) {
         if (!display.clock) {
             overlayContainer.visibility = View.GONE
+            clockScrim.visibility = View.GONE
             return
         }
-        
+
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
-        
-        // Configure date visibility
+
+        // Date (weekday + date), sized relative to the clock
         if (display.date) {
             dateView.visibility = View.VISIBLE
-            dateView.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
+            dateView.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(14f)
         } else {
             dateView.visibility = View.GONE
         }
-        
-        // Setup weather if enabled (needs to know about date visibility)
+
         setupWeather(display)
-        
-        // Position the overlay container
-        val layoutParams = FrameLayout.LayoutParams(
+
+        // Position the cluster
+        val margin = dp(40)
+        overlayContainer.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            val margin = 32
             setMargins(margin, margin, margin, margin)
-            gravity = when (display.clockPosition) {
-                0 -> Gravity.TOP or Gravity.START
-                1 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                2 -> Gravity.TOP or Gravity.END
-                3 -> Gravity.BOTTOM or Gravity.START
-                4 -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                5 -> Gravity.BOTTOM or Gravity.END
-                6 -> Gravity.CENTER
-                else -> Gravity.BOTTOM or Gravity.START
+            gravity = gravityForPosition(display.clockPosition)
+        }
+
+        // Legibility scrim follows the clock's vertical band
+        setupClockScrim(display.clockPosition)
+
+        handler.post(clockRunnable)
+    }
+
+    private fun gravityForPosition(position: Int): Int = when (position) {
+        0 -> Gravity.TOP or Gravity.START
+        1 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        2 -> Gravity.TOP or Gravity.END
+        3 -> Gravity.BOTTOM or Gravity.START
+        4 -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        5 -> Gravity.BOTTOM or Gravity.END
+        6 -> Gravity.CENTER
+        else -> Gravity.BOTTOM or Gravity.START
+    }
+
+    /**
+     * Position the legibility scrim so its dark edge sits behind the clock,
+     * regardless of where the clock is shown (top / bottom / center).
+     */
+    private fun setupClockScrim(position: Int) {
+        val screenH = context.resources.displayMetrics.heightPixels
+        val band = (screenH * 0.55f).toInt()
+        val dark = withAlpha(Color.BLACK, 0xB8)  // 0.72
+        val mid = withAlpha(Color.BLACK, 0x59)   // 0.35
+
+        val colors: IntArray
+        val grav: Int
+        val height: Int
+        when (position) {
+            0, 1, 2 -> {  // top
+                colors = intArrayOf(dark, mid, Color.TRANSPARENT)
+                grav = Gravity.TOP
+                height = band
+            }
+            6 -> {        // center
+                colors = intArrayOf(Color.TRANSPARENT, withAlpha(Color.BLACK, 0x73), Color.TRANSPARENT)
+                grav = Gravity.CENTER
+                height = FrameLayout.LayoutParams.MATCH_PARENT
+            }
+            else -> {     // bottom
+                colors = intArrayOf(Color.TRANSPARENT, mid, dark)
+                grav = Gravity.BOTTOM
+                height = band
             }
         }
-        overlayContainer.layoutParams = layoutParams
-        
-        handler.post(clockRunnable)
+        clockScrim.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors)
+        clockScrim.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, height
+        ).apply { gravity = grav }
+        clockScrim.visibility = View.VISIBLE
     }
     
     private fun setupWeather(display: DisplayConfig) {
         val weather = display.weather
-        
-        // Hide weather if not configured or no data
+
         if (weather == null || !weather.enabled || weather.condition == null) {
-            Log.d(TAG, "Weather hidden: config=${weather != null}, enabled=${weather?.enabled}, condition=${weather?.condition}")
             rightColumn.visibility = View.GONE
             return
         }
-        
-        Log.d(TAG, "Weather shown: ${weather.condition} ${weather.temperature}${weather.temperatureUnit}")
+
         rightColumn.visibility = View.VISIBLE
-        
-        val iconRes = getWeatherIconResource(weather.condition)
+        weatherIcon.setImageResource(getWeatherIconResource(weather.condition))
+
+        val iconSize = (display.clockFontSize * 0.55f).toInt().coerceAtLeast(dp(28))
+        weatherIcon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
+
         val temp = weather.temperature
-        val tempText = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
-        
-        // Set the icon drawable
-        weatherIcon.setImageResource(iconRes)
-        
-        if (display.date) {
-            // 2-row mode: icon on top, temp on bottom (aligned with date)
-            val iconSize = (display.clockFontSize * 1.2f).toInt()
-            weatherIcon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            
-            weatherTemp.text = tempText
-            weatherTemp.textSize = (display.clockFontSize * 0.4f).coerceAtLeast(12f)
-            weatherTemp.visibility = View.VISIBLE
-            weatherTemp.gravity = Gravity.CENTER
-            
-            // Reset order: icon first, temp second
-            rightColumn.removeAllViews()
-            rightColumn.addView(weatherIcon)
-            rightColumn.addView(weatherTemp)
+        weatherTemp.text = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
+        weatherTemp.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(16f)
+
+        val meta = conditionLabel(weather.condition)
+        if (meta.isNotBlank()) {
+            weatherMeta.text = meta
+            weatherMeta.textSize = (display.clockFontSize * 0.16f).coerceAtLeast(11f)
+            weatherMeta.visibility = View.VISIBLE
         } else {
-            // 1-row mode: temp small on top-left, icon below
-            val iconSize = (display.clockFontSize * 0.9f).toInt()
-            weatherIcon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            
-            weatherTemp.text = tempText
-            weatherTemp.textSize = (display.clockFontSize * 0.25f).coerceAtLeast(10f)
-            weatherTemp.visibility = View.VISIBLE
-            weatherTemp.gravity = Gravity.START  // Left-aligned
-            
-            // Reorder: temp first (top), icon second (bottom)
-            rightColumn.removeAllViews()
-            rightColumn.addView(weatherTemp)
-            rightColumn.addView(weatherIcon)
+            weatherMeta.visibility = View.GONE
         }
+    }
+
+    /** Human-readable German label for a Home Assistant weather condition. */
+    private fun conditionLabel(condition: String?): String = when (condition?.lowercase()) {
+        "sunny", "clear", "clear-night" -> "Klar"
+        "partlycloudy", "partly-cloudy", "partly_cloudy" -> "Teils bewölkt"
+        "cloudy" -> "Bewölkt"
+        "rainy", "rain" -> "Regen"
+        "pouring" -> "Starkregen"
+        "snowy", "snow", "snowy-rainy" -> "Schnee"
+        "windy", "wind" -> "Windig"
+        "fog", "foggy", "hazy" -> "Nebel"
+        "lightning", "lightning-rainy", "thunderstorm" -> "Gewitter"
+        "hail" -> "Hagel"
+        "exceptional" -> "Unwetter"
+        else -> ""
     }
     
     /**
@@ -730,10 +779,21 @@ class SlideshowController(
         val now = Date()
         val timeFormat = if (config?.display?.clockFormat == "12h") "hh:mm a" else "HH:mm"
         clockView.text = SimpleDateFormat(timeFormat, Locale.getDefault()).format(now)
-        
+
         if (dateView.visibility == View.VISIBLE) {
             val dateFormat = config?.display?.dateFormat ?: "dd.MM.yyyy"
-            dateView.text = SimpleDateFormat(dateFormat, Locale.getDefault()).format(now)
+            val weekday = SimpleDateFormat("EEE", Locale.getDefault()).format(now)
+            val dateStr = SimpleDateFormat(dateFormat, Locale.getDefault()).format(now)
+            // Weekday dimmed, date in full white (matches the design)
+            val sb = android.text.SpannableStringBuilder()
+            val wd = android.text.SpannableString("$weekday ")
+            wd.setSpan(
+                android.text.style.ForegroundColorSpan(withAlpha(Color.WHITE, 0xB3)),
+                0, wd.length, 0
+            )
+            sb.append(wd)
+            sb.append(dateStr)
+            dateView.text = sb
         }
     }
     
