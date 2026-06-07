@@ -138,7 +138,8 @@ ausgelöst und die Karte geschlossen – **ohne** die Slideshow zu beenden.
 {
   "title": "Haustür",
   "message": "Es klingelt an der Haustür",
-  "color": "#f44336",                 // Akzentfarbe
+  "icon": "mdi:doorbell",             // MDI-Icon-Name (HA-Style)
+  "color": "#e0564e",                  // Akzent-/Quellfarbe (Icon-Tint + Timerbalken)
   "image_url": "https://ha.local/api/camera_proxy/camera.tuer?token=...",
   "duration": 10,                      // Sek.; <= 0 = bleibt bis Tap stehen
   "sound": true,                       // System-Notification-Sound abspielen
@@ -153,14 +154,21 @@ bewusst **kein** System-Toast-Fallback).
 
 | Feld              | Typ    | Pflicht | Default  | Beschreibung                                              |
 |-------------------|--------|---------|----------|----------------------------------------------------------|
-| `message`         | string | **ja**  | –        | Haupttext                                                |
+| `message`         | string | **ja**  | –        | Haupttext (einzeilig, wird ggf. mit … gekürzt)           |
 | `title`           | string | nein    | –        | Titel (fett); fehlt → nur Text                           |
-| `color`           | string | nein    | `#2196F3`| Hex-Akzentfarbe des linken Balkens                       |
+| `icon`            | string | nein    | `mdi:bell`| MDI-Icon-Name, z. B. `mdi:doorbell` (siehe unten)       |
+| `color`           | string | nein    | `#5B8DEF`| Hex-Quellfarbe: tönt Icon-Kachel + Timerbalken           |
 | `image_url`       | string | nein    | –        | Bild rechts (per Glide geladen; **ohne** Auth-Header)    |
 | `duration`        | int    | nein    | `8`      | Sekunden bis Auto-Dismiss; `<= 0` = persistent bis Tap   |
 | `sound`           | bool   | nein    | `false`  | System-Notification-Ton beim Einblenden                  |
 | `callback_url`    | string | nein    | –        | Wird beim Antippen aufgerufen (fire-and-forget)          |
 | `callback_method` | string | nein    | `POST`   | `POST` (mit Body `{}`) oder `GET`                        |
+
+**MDI-Icons:** Die App bündelt den kompletten Material-Design-Icons-Webfont (dasselbe Set,
+das HA nutzt) plus eine Name→Codepoint-Tabelle. `data.icon` aus dem HA-`notify`-Payload kann
+also direkt durchgereicht werden (`"mdi:doorbell"` oder `"doorbell"`). Unbekannte/leere Namen
+fallen auf `mdi:bell` zurück. Die Optik orientiert sich am „Aurora"-Design: Frosted-Glass-Karte
+oben zentriert, getönte Icon-Kachel, Titel + Text, optionales Bild, ablaufender Timerbalken.
 
 **App-Verhalten:**
 - Overlay wird oben-zentriert eingeblendet (Animation), nach `duration` Sek. ausgeblendet.
@@ -190,10 +198,10 @@ curl -X POST http://192.168.1.50:8080/calendar \
   -H "Content-Type: application/json" \
   -d '{"events":[{"title":"Test","start":"2026-06-07T18:00:00+02:00","all_day":false,"calendar":"Privat","color":"#03a9f4"}]}'
 
-# Notification mit Sound + Callback
+# Notification mit Icon + Sound + Callback
 curl -X POST http://192.168.1.50:8080/notify \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test","message":"Hallo aus HA","color":"#f44336","duration":10,"sound":true,"callback_url":"https://ha.local/api/webhook/test_cb"}'
+  -d '{"title":"Test","message":"Hallo aus HA","icon":"mdi:doorbell","color":"#e0564e","duration":10,"sound":true,"callback_url":"https://ha.local/api/webhook/test_cb"}'
 ```
 
 ```powershell

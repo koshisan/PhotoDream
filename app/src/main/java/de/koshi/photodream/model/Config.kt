@@ -135,7 +135,9 @@ data class NotificationPayload(
 
     val message: String = "",
 
-    val color: String? = null,    // accent color hex, e.g. "#f44336"
+    val icon: String? = null,     // MDI icon name, e.g. "mdi:doorbell" (HA notify data.icon)
+
+    val color: String? = null,    // accent/source color hex, e.g. "#f44336"
 
     @SerializedName("image_url")
     val imageUrl: String? = null,

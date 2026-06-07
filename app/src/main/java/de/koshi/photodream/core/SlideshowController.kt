@@ -17,9 +17,13 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.animation.ObjectAnimator
+import android.view.animation.LinearInterpolator
+import android.view.animation.OvershootInterpolator
 import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.google.gson.Gson
+import de.koshi.photodream.util.MdiIcons
 import de.koshi.photodream.R
 import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
@@ -50,6 +54,16 @@ class SlideshowController(
 ) {
     companion object {
         private const val TAG = "SlideshowController"
+
+        // Aurora / frosted-glass palette (approximation of the design's oklch values;
+        // a bit more opaque than the spec since Android has no real backdrop blur).
+        private val GOLD = Color.parseColor("#E0C16A")          // warm gold day labels
+        private val DEFAULT_NC = Color.parseColor("#5B8DEF")    // fallback notification color
+        private val DOT_DEFAULT = Color.parseColor("#9AA3AD")   // fallback calendar dot
+        private val NOTIF_BG = Color.parseColor("#B312141A")    // ~0.70 alpha
+        private val NOTIF_BORDER = Color.parseColor("#29FFFFFF") // ~0.16
+        private val AURORA_BG = Color.parseColor("#A612141A")    // ~0.65 alpha
+        private val AURORA_BORDER = Color.parseColor("#24FFFFFF") // ~0.14
     }
     
     // UI components
@@ -64,12 +78,18 @@ class SlideshowController(
     private lateinit var weatherTemp: TextView
     private lateinit var updateBanner: TextView       // "Update verfügbar" banner
     private lateinit var infoPanel: LinearLayout      // Image info panel (long-press)
-    private lateinit var calendarPanel: LinearLayout  // Upcoming calendar events from HA
-    private lateinit var notificationCard: LinearLayout // HA-style notification overlay
-    private lateinit var notifAccentBar: View
+    private lateinit var calendarPanel: LinearLayout  // Agenda card (frosted)
+    private lateinit var topScrim: View               // legibility gradient while a notification is up
+    private lateinit var notificationCard: FrameLayout // HA-style notification overlay (Aurora)
+    private lateinit var notifIconTile: FrameLayout
+    private lateinit var notifIcon: TextView          // MDI glyph
     private lateinit var notifTitle: TextView
     private lateinit var notifMessage: TextView
+    private lateinit var notifTime: TextView
     private lateinit var notifImage: ImageView
+    private lateinit var notifProgressFill: View
+    private lateinit var notifProgressTrack: View
+    private var notifProgressAnimator: ObjectAnimator? = null
     private lateinit var renderer: SlideshowRenderer
 
     // Info panel state
@@ -229,6 +249,7 @@ class SlideshowController(
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
         notificationDismissRunnable?.let { handler.removeCallbacks(it) }
+        notifProgressAnimator?.cancel()
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
@@ -385,29 +406,43 @@ class SlideshowController(
             }
         }
         
-        // Calendar panel (upcoming events from HA, shown when enabled in config)
+        // Agenda card (frosted "Aurora" style) - upcoming calendar events from HA
         calendarPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(28, 20, 28, 20)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#99000000"))  // 60% opacity black
-                cornerRadius = 24f
-            }
+            clipToOutline = true
+            elevation = dp(10).toFloat()
+            setPadding(dp(24), dp(22), dp(24), dp(20))
+            background = frostedBackground(AURORA_BG, AURORA_BORDER, dp(24).toFloat())
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                val margin = 32
+                val margin = dp(40)
                 setMargins(margin, margin, margin, margin)
-                gravity = Gravity.BOTTOM or Gravity.START
+                gravity = Gravity.BOTTOM or Gravity.END
             }
         }
 
-        // Notification card (HA-style overlay, tappable)
+        // Top legibility scrim (only visible while a notification is shown)
+        topScrim = View(context).apply {
+            visibility = View.GONE
+            alpha = 0f
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#8C000000"), Color.TRANSPARENT)
+            )
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(220)
+            ).apply { gravity = Gravity.TOP }
+        }
+
+        // Notification card (HA-style "Aurora" overlay, tappable)
         buildNotificationCard()
 
         container.addView(imageContainer)
+        container.addView(topScrim)
         container.addView(overlayContainer)
         container.addView(calendarPanel)
         container.addView(infoPanel)
@@ -1264,8 +1299,11 @@ class SlideshowController(
         }
 
         val lp = calendarPanel.layoutParams as FrameLayout.LayoutParams
-        val margin = 32
+        val margin = dp(40)
         lp.setMargins(margin, margin, margin, margin)
+        // Width scales with the screen (design: ~430px on a 1280px display)
+        val screenW = context.resources.displayMetrics.widthPixels
+        lp.width = (screenW * 0.34f).toInt().coerceIn(dp(280), dp(460))
         lp.gravity = when (cal.position) {
             0 -> Gravity.TOP or Gravity.START
             1 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -1274,7 +1312,7 @@ class SlideshowController(
             4 -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             5 -> Gravity.BOTTOM or Gravity.END
             6 -> Gravity.CENTER
-            else -> Gravity.BOTTOM or Gravity.START
+            else -> Gravity.BOTTOM or Gravity.END
         }
         calendarPanel.layoutParams = lp
 
@@ -1307,103 +1345,195 @@ class SlideshowController(
             .sortedBy { parseEventTime(it.start)?.toInstant() ?: java.time.Instant.MAX }
             .take(cal.maxEvents.coerceAtLeast(1))
 
+        // Header: calendar icon + "TERMINE" + count chip
+        addAgendaHeader(sorted.size)
+
         var lastDay: String? = null
-        var first = true
+        var firstDay = true
         for (ev in sorted) {
-            val dayLabel = dayLabelFor(ev.start)
-            if (dayLabel != lastDay) {
-                addCalendarHeader(dayLabel, baseFont, first)
-                lastDay = dayLabel
-                first = false
+            val (rel, abs) = dayParts(ev.start)
+            val key = "$rel|$abs"
+            if (key != lastDay) {
+                addAgendaDayLabel(rel, abs, firstDay)
+                lastDay = key
+                firstDay = false
             }
-            addCalendarEvent(ev, baseFont, cal.showLocation)
+            addAgendaEvent(ev, baseFont, cal.showLocation)
         }
 
         calendarPanel.visibility = View.VISIBLE
     }
 
-    private fun addCalendarHeader(label: String, baseFont: Float, first: Boolean) {
-        val tv = TextView(context).apply {
-            text = label
-            setTextColor(Color.parseColor("#FFD54F"))  // warm amber
-            textSize = baseFont * 0.85f
+    private fun addAgendaHeader(total: Int) {
+        val head = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(16) }
+        }
+
+        val titleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        MdiIcons.glyph(context, "calendar")?.let { g ->
+            val icon = TextView(context).apply {
+                text = g
+                MdiIcons.typeface(context)?.let { typeface = it }
+                setTextColor(withAlpha(Color.WHITE, 0xA6))
+                textSize = 14f
+                setShadowLayer(3f, 0f, 1f, Color.BLACK)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dp(8) }
+            }
+            titleRow.addView(icon)
+        }
+        titleRow.addView(TextView(context).apply {
+            text = "TERMINE"
+            setTextColor(withAlpha(Color.WHITE, 0x9E))
+            textSize = 12f
+            letterSpacing = 0.14f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            setShadowLayer(3f, 0f, 1f, Color.BLACK)
+        })
+
+        val countChip = TextView(context).apply {
+            text = total.toString()
+            setTextColor(withAlpha(Color.WHITE, 0xD9))
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(9), dp(3), dp(9), dp(3))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(999).toFloat()
+                setColor(withAlpha(Color.WHITE, 0x1F))
+            }
+        }
+
+        head.addView(titleRow)
+        head.addView(countChip)
+        calendarPanel.addView(head)
+    }
+
+    private fun addAgendaDayLabel(rel: String?, abs: String, first: Boolean) {
+        val tv = TextView(context).apply {
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setShadowLayer(3f, 0f, 1f, Color.BLACK)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = if (first) 0 else dp(10) }
+            ).apply {
+                topMargin = if (first) 0 else dp(18)
+                bottomMargin = dp(9)
+            }
+        }
+        if (rel != null) {
+            val sb = android.text.SpannableStringBuilder()
+            val relPart = android.text.SpannableString("$rel  ")
+            relPart.setSpan(android.text.style.ForegroundColorSpan(GOLD), 0, relPart.length, 0)
+            val absPart = android.text.SpannableString(abs)
+            absPart.setSpan(
+                android.text.style.ForegroundColorSpan(withAlpha(Color.WHITE, 0x73)),
+                0, absPart.length, 0
+            )
+            sb.append(relPart)
+            sb.append(absPart)
+            tv.text = sb
+        } else {
+            tv.text = abs
+            tv.setTextColor(withAlpha(Color.WHITE, 0xB3))
         }
         calendarPanel.addView(tv)
     }
 
-    private fun addCalendarEvent(ev: CalendarEvent, baseFont: Float, showLocation: Boolean) {
+    private fun addAgendaEvent(ev: CalendarEvent, baseFont: Float, showLocation: Boolean) {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4) }
-        }
-
-        val dot = View(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(9), dp(9)).apply { marginEnd = dp(8) }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(parseColorOrNull(ev.color) ?: Color.WHITE)
-            }
+            ).apply { topMargin = dp(2) }
         }
 
         val zdt = parseEventTime(ev.start)
-        val timeStr = if (ev.allDay) {
-            "ganztägig"
-        } else {
+        val timeStr = if (ev.allDay) "" else
             zdt?.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) ?: ""
+
+        val time = TextView(context).apply {
+            text = timeStr
+            setTextColor(withAlpha(Color.WHITE, 0xF2))
+            textSize = baseFont + 1f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setShadowLayer(3f, 0f, 1f, Color.BLACK)
+            layoutParams = LinearLayout.LayoutParams(
+                dp(54), LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(10) }
         }
 
-        val eventText = TextView(context).apply {
-            text = if (timeStr.isNotBlank()) "$timeStr  ${ev.title}" else ev.title
-            setTextColor(Color.WHITE)
+        val titleWrap = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val dot = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(9), dp(9)).apply {
+                marginEnd = dp(9)
+                topMargin = dp(6)
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(parseColorOrNull(ev.color) ?: DOT_DEFAULT)
+            }
+        }
+        val title = TextView(context).apply {
+            text = ev.title
+            setTextColor(withAlpha(Color.WHITE, 0xE6))
             textSize = baseFont
-            setShadowLayer(3f, 1f, 1f, Color.BLACK)
-            maxWidth = dp(420)
+            setShadowLayer(3f, 0f, 1f, Color.BLACK)
         }
+        titleWrap.addView(dot)
+        titleWrap.addView(title)
 
-        row.addView(dot)
-        row.addView(eventText)
+        row.addView(time)
+        row.addView(titleWrap)
         calendarPanel.addView(row)
 
         if (showLocation && !ev.location.isNullOrBlank()) {
             val loc = TextView(context).apply {
                 text = ev.location
-                setTextColor(Color.parseColor("#B0FFFFFF"))
-                textSize = baseFont * 0.8f
-                setShadowLayer(3f, 1f, 1f, Color.BLACK)
-                maxWidth = dp(420)
+                setTextColor(withAlpha(Color.WHITE, 0x99))
+                textSize = baseFont * 0.82f
+                setShadowLayer(3f, 0f, 1f, Color.BLACK)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginStart = dp(17) }
+                ).apply { marginStart = dp(64); bottomMargin = dp(2) }
             }
             calendarPanel.addView(loc)
         }
     }
 
     /**
-     * Label for the day an event falls on: "Heute", "Morgen", or e.g. "Mo, 09.06.".
+     * (relativeLabel, absoluteLabel) for the day an event falls on.
+     * e.g. ("Heute", "Sa, 07.06.") or (null, "Di, 09.06.").
      */
-    private fun dayLabelFor(start: String?): String {
-        val zdt = parseEventTime(start) ?: return "—"
+    private fun dayParts(start: String?): Pair<String?, String> {
+        val zdt = parseEventTime(start) ?: return null to "—"
         val date = zdt.toLocalDate()
         val today = java.time.LocalDate.now()
-        return when (date) {
+        val abs = date.format(
+            java.time.format.DateTimeFormatter.ofPattern("EEE, dd.MM.", Locale.getDefault())
+        )
+        val rel = when (date) {
             today -> "Heute"
             today.plusDays(1) -> "Morgen"
-            else -> date.format(
-                java.time.format.DateTimeFormatter.ofPattern("EEE, dd.MM.", Locale.getDefault())
-            )
+            else -> null
         }
+        return rel to abs
     }
 
     /**
@@ -1431,29 +1561,40 @@ class SlideshowController(
     // --- Notification Overlay ---
 
     private fun buildNotificationCard() {
-        notifAccentBar = View(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(5), LinearLayout.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(Color.parseColor("#2196F3"))
+        // Icon tile (54x54, rounded, tinted with the source color)
+        notifIcon = TextView(context).apply {
+            MdiIcons.typeface(context)?.let { typeface = it }
+            textSize = 30f
+            gravity = Gravity.CENTER
+        }
+        notifIconTile = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply { marginEnd = dp(18) }
+            addView(
+                notifIcon,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
         }
 
         notifTitle = TextView(context).apply {
             setTextColor(Color.WHITE)
-            textSize = 16f
+            textSize = 20f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
-
         notifMessage = TextView(context).apply {
-            setTextColor(Color.parseColor("#E0FFFFFF"))
-            textSize = 14f
+            setTextColor(withAlpha(Color.WHITE, 0xCC))
+            textSize = 17f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(2) }
+            ).apply { topMargin = dp(3) }
         }
-
-        val textColumn = LinearLayout(context).apply {
+        val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             addView(notifTitle)
             addView(notifMessage)
@@ -1461,57 +1602,132 @@ class SlideshowController(
 
         notifImage = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
             visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(13).toFloat()
+                setColor(withAlpha(Color.WHITE, 0x14))
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(116), dp(68)).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                marginEnd = dp(12)
+                marginStart = dp(16)
             }
         }
 
-        notificationCard = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-            clipToOutline = true
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#F2212121"))  // near-opaque dark
-                cornerRadius = dp(16).toFloat()
+        notifTime = TextView(context).apply {
+            text = "jetzt"
+            setTextColor(withAlpha(Color.WHITE, 0x99))
+            textSize = 15f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP
+                marginStart = dp(14)
+                topMargin = dp(2)
             }
-            elevation = dp(8).toFloat()
-            addView(notifAccentBar)
-            addView(textColumn)
-            addView(notifImage)
+        }
+
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(24), dp(18), dp(24), dp(20))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                val m = dp(16)
-                setMargins(m, m, m, m)
+            )
+            addView(notifIconTile)
+            addView(body)
+            addView(notifImage)
+            addView(notifTime)
+        }
+
+        // Timer/progress bar pinned to the bottom (drains over the display duration)
+        notifProgressFill = View(context).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(2).toFloat()
+                setColor(DEFAULT_NC)
             }
+            pivotX = 0f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        notifProgressTrack = FrameLayout(context).apply {
+            clipToOutline = true
+            background = GradientDrawable().apply {
+                cornerRadius = dp(2).toFloat()
+                setColor(withAlpha(Color.WHITE, 0x24))
+            }
+            addView(notifProgressFill)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(3)
+            ).apply {
+                gravity = Gravity.BOTTOM
+                leftMargin = dp(24)
+                rightMargin = dp(24)
+                bottomMargin = dp(9)
+            }
+        }
+
+        notificationCard = FrameLayout(context).apply {
+            visibility = View.GONE
+            clipToOutline = true
+            elevation = dp(12).toFloat()
+            background = frostedBackground(NOTIF_BG, NOTIF_BORDER, dp(22).toFloat())
+            addView(row)
+            addView(notifProgressTrack)
+        }
+
+        // Width scales with the screen (design: 760px on a 1280px display)
+        val screenW = context.resources.displayMetrics.widthPixels
+        val cardW = (screenW * 0.6f).toInt().coerceIn(dp(320), dp(900))
+        notificationCard.layoutParams = FrameLayout.LayoutParams(
+            cardW, FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = dp(20)
         }
     }
 
     private fun showNotification(payload: NotificationPayload) {
         if (!::notificationCard.isInitialized) return
-        Log.i(TAG, "Showing notification: '${payload.title}'")
+        Log.i(TAG, "Showing notification: '${payload.title}' icon=${payload.icon}")
 
         currentNotification = payload
         notificationDismissRunnable?.let { handler.removeCallbacks(it) }
+        notifProgressAnimator?.cancel()
 
         if (payload.sound) playNotificationSound()
 
-        val accent = parseColorOrNull(payload.color) ?: Color.parseColor("#2196F3")
-        notifAccentBar.setBackgroundColor(accent)
+        val nc = parseColorOrNull(payload.color) ?: DEFAULT_NC
 
+        // Icon tile (MDI glyph tinted with the source color; falls back to a bell)
+        val glyph = MdiIcons.glyph(context, payload.icon) ?: MdiIcons.glyph(context, "bell")
+        if (glyph != null) {
+            notifIcon.text = glyph
+            notifIcon.setTextColor(nc)
+            notifIconTile.background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(withAlpha(nc, 0x38))  // ~22% tint
+            }
+            notifIconTile.visibility = View.VISIBLE
+        } else {
+            notifIconTile.visibility = View.GONE
+        }
+
+        // Title / message
         if (payload.title.isNullOrBlank()) {
             notifTitle.visibility = View.GONE
         } else {
             notifTitle.text = payload.title
             notifTitle.visibility = View.VISIBLE
         }
-
         notifMessage.text = payload.message
 
+        // Optional image
         if (!payload.imageUrl.isNullOrBlank()) {
             notifImage.visibility = View.VISIBLE
             try {
@@ -1524,22 +1740,38 @@ class SlideshowController(
             notifImage.visibility = View.GONE
         }
 
-        // Animate in
+        // Progress/timer bar
+        val durationMs = if (payload.duration > 0) payload.duration * 1000L else 0L
+        if (durationMs > 0) {
+            notifProgressTrack.visibility = View.VISIBLE
+            notifProgressFill.scaleX = 1f
+            (notifProgressFill.background as? GradientDrawable)?.setColor(nc)
+            notifProgressAnimator = ObjectAnimator.ofFloat(notifProgressFill, "scaleX", 1f, 0f).apply {
+                duration = durationMs
+                interpolator = LinearInterpolator()
+                start()
+            }
+        } else {
+            notifProgressTrack.visibility = View.GONE
+        }
+
+        // Slide in (with slight overshoot) + top legibility scrim
+        showTopScrim(true)
         notificationCard.visibility = View.VISIBLE
         notificationVisible = true
         notificationCard.alpha = 0f
-        notificationCard.translationY = -dp(40).toFloat()
+        notificationCard.translationY = -dp(160).toFloat()
         notificationCard.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(250)
+            .setDuration(500)
+            .setInterpolator(OvershootInterpolator(0.9f))
             .start()
 
-        // Auto-dismiss (duration <= 0 means persistent until tap)
-        if (payload.duration > 0) {
+        if (durationMs > 0) {
             val runnable = Runnable { dismissNotification() }
             notificationDismissRunnable = runnable
-            handler.postDelayed(runnable, payload.duration * 1000L)
+            handler.postDelayed(runnable, durationMs)
         }
     }
 
@@ -1548,14 +1780,29 @@ class SlideshowController(
         notificationVisible = false
         notificationDismissRunnable?.let { handler.removeCallbacks(it) }
         notificationDismissRunnable = null
+        notifProgressAnimator?.cancel()
+        notifProgressAnimator = null
         currentNotification = null
 
+        showTopScrim(false)
         notificationCard.animate()
             .alpha(0f)
-            .translationY(-dp(40).toFloat())
-            .setDuration(200)
+            .translationY(-dp(160).toFloat())
+            .setDuration(280)
+            .setInterpolator(LinearInterpolator())
             .withEndAction { notificationCard.visibility = View.GONE }
             .start()
+    }
+
+    private fun showTopScrim(show: Boolean) {
+        if (!::topScrim.isInitialized) return
+        if (show) {
+            topScrim.visibility = View.VISIBLE
+            topScrim.animate().alpha(1f).setDuration(400).start()
+        } else {
+            topScrim.animate().alpha(0f).setDuration(400)
+                .withEndAction { topScrim.visibility = View.GONE }.start()
+        }
     }
 
     private fun onNotificationTapped() {
@@ -1599,6 +1846,18 @@ class SlideshowController(
 
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
+
+    /** Apply an explicit alpha (0..255) to an opaque color. */
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or ((alpha and 0xFF) shl 24)
+
+    /** Frosted-glass card background: translucent fill + hairline border + rounded corners. */
+    private fun frostedBackground(fill: Int, stroke: Int, radius: Float): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(fill)
+            setStroke(dp(1), stroke)
+        }
 
     private fun parseColorOrNull(hex: String?): Int? {
         if (hex.isNullOrBlank()) return null
