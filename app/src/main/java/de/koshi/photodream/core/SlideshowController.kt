@@ -633,14 +633,18 @@ class SlideshowController(
 
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
-        // Negative letterSpacing can clip the trailing glyph on WRAP_CONTENT views
-        // (e.g. "18:00" -> "18:0"); add end padding that scales with the font size.
-        clockView.setPadding(0, 0, (clockView.textSize * 0.1f).toInt(), 0)
+        // Negative letterSpacing shifts the first glyph left and shortens the trailing
+        // advance, so the clock gets clipped on BOTH sides (e.g. "18:00" -> "18:0").
+        // Add symmetric horizontal padding that scales with the font size.
+        val clockPad = (clockView.textSize * 0.14f).toInt()
+        clockView.setPadding(clockPad, 0, clockPad, 0)
 
-        // Date (weekday + date), sized relative to the clock
+        // Date (weekday + date), sized relative to the clock.
+        // Match the clock's left padding so both stay left-aligned.
         if (display.date) {
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(14f)
+            dateView.setPadding(clockPad, 0, 0, 0)
         } else {
             dateView.visibility = View.GONE
         }
@@ -728,7 +732,8 @@ class SlideshowController(
         val temp = weather.temperature
         weatherTemp.text = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         weatherTemp.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(16f)
-        weatherTemp.setPadding(0, 0, (weatherTemp.textSize * 0.08f).toInt(), 0)
+        val tempPad = (weatherTemp.textSize * 0.12f).toInt()
+        weatherTemp.setPadding(tempPad, 0, tempPad, 0)
 
         val meta = conditionLabel(weather.condition)
         if (meta.isNotBlank()) {
