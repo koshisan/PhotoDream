@@ -265,6 +265,7 @@ class SlideshowController(
     fun stop() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
+        handler.removeCallbacks(backdropRunnable)
         notificationDismissRunnable?.let { handler.removeCallbacks(it) }
         notifProgressAnimator?.cancel()
         if (::renderer.isInitialized) {
@@ -517,7 +518,7 @@ class SlideshowController(
                 Log.d(TAG, "Image shown: ${asset.id}")
                 reportStatusToHA()
                 httpService?.updateStatus(getCurrentStatus())
-                updateBackdrops()
+                refreshLiveBackdrop()
             }
             
             onImageError = { error ->
@@ -1483,7 +1484,7 @@ class SlideshowController(
         }
 
         calendarCard.visibility = View.VISIBLE
-        container.post { updateBackdrop(calendarBackdrop) }
+        startBackdropLoop()
     }
 
     private fun addAgendaHeader(total: Int) {
@@ -1900,9 +1901,8 @@ class SlideshowController(
             .translationY(0f)
             .setDuration(500)
             .setInterpolator(OvershootInterpolator(0.9f))
-            .withEndAction { updateBackdrop(notifBackdrop) }
             .start()
-        container.post { updateBackdrop(notifBackdrop) }
+        startBackdropLoop()
 
         if (durationMs > 0) {
             val runnable = Runnable { dismissNotification() }
@@ -2021,7 +2021,7 @@ class SlideshowController(
                 }
             }
             // Repaint the backdrop slice after the layers have been laid out.
-            backdrop?.let { bd -> bd.post { updateBackdrop(bd) } }
+            card.post { startBackdropLoop() }
         }
     }
 
@@ -2042,7 +2042,7 @@ class SlideshowController(
 
     /**
      * Frosted-glass backdrop ImageView. On API 31+ a GPU RenderEffect blur is applied;
-     * on older devices the bitmap is software-blurred in [updateBackdrop] instead.
+     * on older devices the bitmap is software-blurred in [refreshLiveBackdrop] instead.
      * Starts at 0x0 (sized by [syncCardLayers]) so it never inflates the card.
      */
     private fun createBackdrop(radiusDp: Int): ImageView =
@@ -2060,76 +2060,91 @@ class SlideshowController(
             }
         }
 
+    private val backdropRunnable = object : Runnable {
+        override fun run() {
+            refreshLiveBackdrop()
+            if (anyCardVisible()) handler.postDelayed(this, 350)
+        }
+    }
+
+    private fun anyCardVisible(): Boolean =
+        (::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE) ||
+        (::notificationCard.isInitialized && notificationCard.visibility == View.VISIBLE)
+
+    /** Start the periodic live-backdrop refresh while any card is visible (idempotent). */
+    private fun startBackdropLoop() {
+        handler.removeCallbacks(backdropRunnable)
+        handler.post(backdropRunnable)
+    }
+
     /**
-     * Paint the current slideshow photo into a card's backdrop, offset so the slice
-     * under the card aligns with the photo behind it (heavy blur hides any drift).
+     * True frosted glass: capture the live photo layer (current Ken-Burns pan
+     * included) at 1/4 resolution, blur it, and show the matching slice behind each
+     * card. Videos use a SurfaceView that can't be captured, so for video assets we
+     * fall back to a solid frost (no stale image bleeding through).
      */
-    private fun updateBackdrop(backdrop: ImageView?) {
-        if (backdrop == null) return
-        val card = backdrop.parent as? View ?: return
-        if (card.visibility != View.VISIBLE) return
-        if (backdrop.width <= 0 || backdrop.height <= 0) return
+    private fun refreshLiveBackdrop() {
+        if (!anyCardVisible()) return
+        val cw = container.width
+        val ch = container.height
+        if (cw <= 0 || ch <= 0) return
 
-        val bmp = (if (::renderer.isInitialized) renderer.currentBitmap() else null) ?: return
+        val isVideo = playlist.getOrNull(currentIndex)?.type == "VIDEO"
+        if (isVideo) {
+            if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_SOLID)
+            if (::notifTint.isInitialized) notifTint.setBackgroundColor(NOTIF_FILL_SOLID)
+            calendarBackdrop?.visibility = View.INVISIBLE
+            notifBackdrop?.visibility = View.INVISIBLE
+            return
+        }
+        if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_BLUR)
+        if (::notifTint.isInitialized) notifTint.setBackgroundColor(NOTIF_FILL_BLUR)
+        calendarBackdrop?.visibility = View.VISIBLE
+        notifBackdrop?.visibility = View.VISIBLE
 
-        val cw = container.width.toFloat()
-        val ch = container.height.toFloat()
-        if (cw <= 0f || ch <= 0f) return
+        val sample = 4
+        val shot = try {
+            val bmp = Bitmap.createBitmap(
+                (cw / sample).coerceAtLeast(1),
+                (ch / sample).coerceAtLeast(1),
+                Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            canvas.scale(1f / sample, 1f / sample)
+            imageContainer.draw(canvas)  // captures the photos at their current pan state
+            bmp
+        } catch (e: Exception) {
+            Log.e(TAG, "Backdrop capture failed: ${e.message}")
+            return
+        }
 
+        // On API 31+ the GPU RenderEffect on the ImageView blurs it; otherwise blur here.
+        val out: Bitmap = if (gpuBlur) shot else {
+            val b = ImageBlur.stackBlur(shot, 10)
+            if (b !== shot) shot.recycle()
+            b
+        }
+
+        applyLiveBackdrop(calendarBackdrop, out, sample)
+        applyLiveBackdrop(notifBackdrop, out, sample)
+        out.recycle()
+    }
+
+    /** Show the captured screen slice that sits behind [backdrop]'s card. */
+    private fun applyLiveBackdrop(backdrop: ImageView?, shot: Bitmap, sample: Int) {
+        if (backdrop == null || backdrop.width <= 0 || backdrop.height <= 0) return
+        val copy = shot.copy(Bitmap.Config.ARGB_8888, false)
         val loc = IntArray(2); backdrop.getLocationInWindow(loc)
         val cloc = IntArray(2); container.getLocationInWindow(cloc)
         val offX = (loc[0] - cloc[0]).toFloat()
         val offY = (loc[1] - cloc[1]).toFloat()
-
-        // Own downscaled copy: decouples from Glide's bitmap pool (avoids "recycled
-        // bitmap" crashes) and makes blurring cheap. On API 31+ the GPU RenderEffect
-        // blurs the view; otherwise we software-blur the downscaled copy here.
-        val out: Bitmap = try {
-            val scaled = downscale(bmp, 480)
-            if (gpuBlur) {
-                scaled
-            } else {
-                val blurred = ImageBlur.stackBlur(scaled, 18)
-                if (blurred !== scaled) scaled.recycle()
-                blurred
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Backdrop render failed: ${e.message}"); return
-        }
-
-        val bw = out.width.toFloat()
-        val bh = out.height.toFloat()
-        val scale = maxOf(cw / bw, ch / bh)
-        val dx = (cw - bw * scale) / 2f
-        val dy = (ch - bh * scale) / 2f
-
         val old = (backdrop.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-        backdrop.setImageBitmap(out)
+        backdrop.setImageBitmap(copy)
         backdrop.imageMatrix = Matrix().apply {
-            setScale(scale, scale)
-            postTranslate(dx - offX, dy - offY)
+            setScale(sample.toFloat(), sample.toFloat())  // upscale the 1/4 capture to screen
+            postTranslate(-offX, -offY)                   // shift to this card's position
         }
-        if (old != null && old != out && !old.isRecycled) old.recycle()
-    }
-
-    /** Downscale a bitmap so its largest side is at most [maxDim] (returns an own copy). */
-    private fun downscale(src: Bitmap, maxDim: Int): Bitmap {
-        val largest = maxOf(src.width, src.height)
-        if (largest <= maxDim) {
-            return src.copy(src.config ?: Bitmap.Config.ARGB_8888, false)
-        }
-        val s = maxDim.toFloat() / largest
-        return Bitmap.createScaledBitmap(
-            src,
-            (src.width * s).toInt().coerceAtLeast(1),
-            (src.height * s).toInt().coerceAtLeast(1),
-            true
-        )
-    }
-
-    private fun updateBackdrops() {
-        updateBackdrop(calendarBackdrop)
-        updateBackdrop(notifBackdrop)
+        if (old != null && old != copy && !old.isRecycled) old.recycle()
     }
 
     private fun parseColorOrNull(hex: String?): Int? {
