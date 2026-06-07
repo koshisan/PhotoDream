@@ -293,9 +293,12 @@ class SlideshowController(
             )
         }
         
-        // Overlay container (positioned via gravity)
+        // Overlay container (positioned via gravity). Don't clip children so large
+        // thin glyphs / shadows are never cut at the container edge.
         overlayContainer = FrameLayout(context).apply {
             visibility = View.GONE
+            clipChildren = false
+            clipToPadding = false
         }
         
         // Clean "Aurora" info cluster (design): thin display typo, carried by a scrim.
@@ -308,20 +311,24 @@ class SlideshowController(
         mainRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM  // align-items: flex-end
+            clipChildren = false
+            clipToPadding = false
         }
 
         leftColumn = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
+            clipChildren = false
+            clipToPadding = false
         }
 
         clockView = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 32f
             typeface = thin
-            letterSpacing = -0.03f
-            includeFontPadding = false
-            setShadowLayer(30f, 0f, 2f, withAlpha(Color.BLACK, 0x73))
+            // NOTE: no negative letterSpacing / includeFontPadding=false here — both
+            // cause TextView to clip large glyphs (the "18:0" bug).
+            setShadowLayer(16f, 0f, 2f, withAlpha(Color.BLACK, 0x73))
         }
 
         dateView = TextView(context).apply {
@@ -349,8 +356,6 @@ class SlideshowController(
             setTextColor(Color.WHITE)
             textSize = 18f
             typeface = light
-            letterSpacing = -0.01f
-            includeFontPadding = false
             setShadowLayer(12f, 0f, 1f, withAlpha(Color.BLACK, 0x80))
         }
 
@@ -633,18 +638,11 @@ class SlideshowController(
 
         overlayContainer.visibility = View.VISIBLE
         clockView.textSize = display.clockFontSize.toFloat()
-        // Negative letterSpacing shifts the first glyph left and shortens the trailing
-        // advance, so the clock gets clipped on BOTH sides (e.g. "18:00" -> "18:0").
-        // Add symmetric horizontal padding that scales with the font size.
-        val clockPad = (clockView.textSize * 0.14f).toInt()
-        clockView.setPadding(clockPad, 0, clockPad, 0)
 
-        // Date (weekday + date), sized relative to the clock.
-        // Match the clock's left padding so both stay left-aligned.
+        // Date (weekday + date), sized relative to the clock
         if (display.date) {
             dateView.visibility = View.VISIBLE
             dateView.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(14f)
-            dateView.setPadding(clockPad, 0, 0, 0)
         } else {
             dateView.visibility = View.GONE
         }
@@ -732,8 +730,6 @@ class SlideshowController(
         val temp = weather.temperature
         weatherTemp.text = if (temp != null) "${temp.toInt()}${weather.temperatureUnit}" else ""
         weatherTemp.textSize = (display.clockFontSize * 0.32f).coerceAtLeast(16f)
-        val tempPad = (weatherTemp.textSize * 0.12f).toInt()
-        weatherTemp.setPadding(tempPad, 0, tempPad, 0)
 
         val meta = conditionLabel(weather.condition)
         if (meta.isNotBlank()) {
