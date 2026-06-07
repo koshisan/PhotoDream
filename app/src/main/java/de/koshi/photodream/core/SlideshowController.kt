@@ -391,7 +391,7 @@ class SlideshowController(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                marginStart = dp(30)
+                marginStart = dp(16)
                 bottomMargin = dp(8)  // baseline-ish alignment with the date
             }
             addView(weatherIcon)
@@ -652,7 +652,9 @@ class SlideshowController(
         // advance width and gets clipped by the TextView at larger sizes (WRAP_CONTENT
         // padding does not help). Fixed width + left alignment keeps it clean.
         val clockSample = if (display.clockFormat == "12h") "88:88 AM" else "88:88"
-        val clockWidth = (clockView.paint.measureText(clockSample) * 1.12f).toInt()
+        // Reserve the measured width + a small fixed buffer (enough against glyph
+        // overhang, but without the large 12% gap that pushed the weather away).
+        val clockWidth = clockView.paint.measureText(clockSample).toInt() + dp(8)
         clockView.layoutParams = LinearLayout.LayoutParams(
             clockWidth, LinearLayout.LayoutParams.WRAP_CONTENT
         )
