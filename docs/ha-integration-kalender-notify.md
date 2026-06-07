@@ -196,9 +196,12 @@ ausgelöst und die Karte geschlossen – **ohne** die Slideshow zu beenden.
 }
 ```
 
-**Antwort:** `{"success": true, "shown": true}`
-`shown` ist `false`, wenn aktuell **keine Slideshow läuft** (dann gibt es kein Overlay –
-bewusst **kein** System-Toast-Fallback).
+**Antwort:** `{"success": true, "shown": true, "via": "slideshow"|"overlay", "overlay_permission": true}`
+
+Notifications funktionieren **immer** – läuft die Slideshow, wird die (frosted) In-Slideshow-Karte
+gezeigt (`via: "slideshow"`); läuft sie nicht, ein **System-Overlay-Fenster** (`via: "overlay"`).
+Das Overlay braucht die Berechtigung **„Über anderen Apps anzeigen" (SYSTEM_ALERT_WINDOW)** –
+ist die nicht erteilt, ist `overlay_permission: false` und `shown: false` (nur dann erscheint nichts).
 
 | Feld              | Typ    | Pflicht | Default  | Beschreibung                                              |
 |-------------------|--------|---------|----------|----------------------------------------------------------|

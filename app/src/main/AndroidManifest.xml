@@ -85,6 +85,11 @@
         <service
             android:name=".util.BrightnessOverlayService"
             android:exported="false" />
+
+        <!-- Notification Overlay Service (shows notifications when the slideshow isn't running) -->
+        <service
+            android:name=".util.NotificationOverlayService"
+            android:exported="false" />
         
         <!-- Accessibility Service for global key event capture -->
         <service
