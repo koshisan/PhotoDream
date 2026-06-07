@@ -2046,7 +2046,7 @@ class SlideshowController(
         GradientDrawable().apply {
             cornerRadius = radius
             setColor(Color.TRANSPARENT)
-            setStroke(dp(1), stroke)
+            setStroke(dp(2), stroke)
         }
 
     /**
@@ -2138,18 +2138,20 @@ class SlideshowController(
         return c
     }
 
-    /** Lighten a color toward white and apply a soft alpha for a glassy, tinted edge. */
+    /** Brighten and slightly saturate the background color for a clearly visible, tinted edge. */
     private fun adaptiveRim(color: Int): Int {
-        val r = (Color.red(color) + (255 - Color.red(color)) * 0.45f).toInt()
-        val g = (Color.green(color) + (255 - Color.green(color)) * 0.45f).toInt()
-        val b = (Color.blue(color) + (255 - Color.blue(color)) * 0.45f).toInt()
-        return Color.argb(0x70, r, g, b)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        hsv[1] = (hsv[1] * 1.35f).coerceAtMost(1f)         // a touch more saturated
+        hsv[2] = (hsv[2] * 1.4f + 0.25f).coerceAtMost(1f)  // noticeably brighter
+        return withAlpha(Color.HSVToColor(hsv), 0xC8)      // ~78%
     }
 
-    /** Update a card's hairline (foreground) stroke color. */
+    /** Update a card's hairline (foreground) stroke color. Width is wider than 1px
+     *  because clipToOutline clips away the outer half of the stroke. */
     private fun applyCardBorder(card: FrameLayout, color: Int) {
         (card.foreground as? GradientDrawable)?.let {
-            it.setStroke(dp(1), color)
+            it.setStroke(dp(2), color)
             card.invalidate()
         }
     }
