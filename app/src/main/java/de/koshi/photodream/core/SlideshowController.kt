@@ -305,8 +305,8 @@ class SlideshowController(
         // mainRow (horizontal, bottom-aligned)
         // ├── leftColumn (vertical): clock (thin), date (weekday + date)
         // └── rightColumn (horizontal): weather icon + [temp, meta]
-        val thin = android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL)
-        val light = android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
+        val thin = weightedSans(200)   // clock (mockup: 200)
+        val light = weightedSans(300)  // temperature (mockup: 300)
 
         mainRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1982,6 +1982,17 @@ class SlideshowController(
 
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
+
+    /** Sans-serif at an exact weight (API 28+); approximated via named families below. */
+    private fun weightedSans(weight: Int): android.graphics.Typeface =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, weight, false)
+        } else when {
+            weight <= 250 -> android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL)
+            weight <= 350 -> android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
+            weight >= 600 -> android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+            else -> android.graphics.Typeface.SANS_SERIF
+        }
 
     /** Apply an explicit alpha (0..255) to an opaque color. */
     private fun withAlpha(color: Int, alpha: Int): Int =
