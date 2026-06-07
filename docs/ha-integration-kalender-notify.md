@@ -126,6 +126,54 @@ Das `display`-Objekt der `DeviceConfig` bekommt einen neuen optionalen Block `ca
 
 ---
 
+## 1b. Wetter – Tageshoch / Tagestief (im `/configure`-Push)
+
+Der `weather`-Block im `display`-Objekt der `DeviceConfig` zeigt jetzt unter der
+großen Temperatur eine Meta-Zeile: **„Regen · 14° / 21°"** (Zustand · Tagestief / Tageshoch).
+Dafür müssen **zwei neue Felder** mitgeschickt werden:
+
+```jsonc
+"display": {
+  // ...
+  "weather": {
+    "enabled": true,
+    "condition": "rainy",        // HA weather-State -> Lucide-Icon (Mapping unten)
+    "temperature": 20,           // aktuelle Temperatur (große Zahl)
+    "temperature_unit": "°",     // "°", "°C" oder "°F"
+    "temp_low": 14,              // NEU – Tagestief  (Meta-Zeile)
+    "temp_high": 21              // NEU – Tageshoch (Meta-Zeile)
+  }
+}
+```
+
+| Feld               | Typ    | Pflicht | Beschreibung |
+|--------------------|--------|---------|--------------|
+| `enabled`          | bool   | ja      | Wetter anzeigen |
+| `condition`        | string | ja      | HA `weather`-State (`sunny`, `rainy`, `pouring`, `cloudy`, `partlycloudy`, `fog`, `snowy`, `lightning`, `windy`, `clear-night`, `hail`, `exceptional`, …) |
+| `temperature`      | number | ja      | aktuelle Temperatur |
+| `temperature_unit` | string | nein    | Default `°C`; für die Mockup-Optik `"°"` |
+| `temp_low`         | number | nein    | **Tagestief** – ohne dieses Feld bleibt die Meta-Zeile nur der Zustand |
+| `temp_high`        | number | nein    | **Tageshoch** |
+
+**Wichtig (HA): Hoch/Tief gibt es NICHT mehr als Attribut.** Home Assistant hat das
+`forecast`-Attribut am `weather`-Entity entfernt. Heute holt man die Tageswerte über den
+Service **`weather.get_forecasts`** (`type: daily`), erster Eintrag = heute:
+
+```yaml
+# Beispiel: Tageshoch/-tief ermitteln und in den /configure-Payload geben
+action: weather.get_forecasts
+target: { entity_id: weather.home }
+data: { type: daily }
+response_variable: fc
+# fc["weather.home"].forecast[0].temperature  -> Tageshoch  -> temp_high
+# fc["weather.home"].forecast[0].templow      -> Tagestief  -> temp_low
+```
+
+(Gilt für alle Quellen – OpenWeatherMap, Met.no, … – das Feld heißt im Forecast
+`temperature` für das Hoch und `templow` für das Tief.)
+
+---
+
 ## 2. Notification-Overlay
 
 `POST http://<device_ip>:<port>/notify`
@@ -220,6 +268,8 @@ Invoke-RestMethod -Method Post -Uri "http://192.168.1.50:8080/notify" `
 - [ ] Konfigurierbare Auswahl der einzubeziehenden `calendar.*`-Entities + Farb-Mapping.
 - [ ] Automation/Logik: `calendar.get_events` über alle gewählten Entities → Liste mergen,
       sortieren, an `POST /calendar` pushen (periodisch + bei Änderungen).
+- [ ] **Wetter:** `display.weather` um `temp_low` / `temp_high` erweitern, via
+      `weather.get_forecasts` (`type: daily`, Eintrag[0]: `temperature`→high, `templow`→low).
 - [ ] `rest_command` (+ optional `notify`/Script-Wrapper) für `POST /notify`.
 - [ ] Webhook(s) für die `callback_url`-Quittierung der Notifications.
 - [ ] Geräte-IP/Port aus dem bestehenden Registrierungs-/Discovery-Mechanismus
