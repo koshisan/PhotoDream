@@ -11,8 +11,8 @@ android {
         applicationId = "de.koshi.photodream"
         minSdk = 23
         targetSdk = 36
-        versionCode = 32
-        versionName = "1.6.7"
+        versionCode = 33
+        versionName = "1.6.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

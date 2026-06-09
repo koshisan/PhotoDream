@@ -5,9 +5,6 @@ import android.animation.ObjectAnimator
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -18,140 +15,123 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.bumptech.glide.Glide
-import de.koshi.photodream.model.NotificationPayload
 import de.koshi.photodream.util.MdiIcons
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Shared notification UI used by BOTH the in-slideshow overlay (SlideshowController)
- * and the system-overlay window (NotificationOverlayService).
+ * Renders the "Aurora" notification cards as a vertical stack (newest on top; older
+ * cards slide down). Driven by [NotificationCenter] — it owns no timers/callbacks,
+ * it only shows/removes cards. Used by both the slideshow and the overlay window.
  *
- * Renders the "Aurora" notification cards as a vertical stack: a new notification is
- * added on top, older ones slide down; when any card expires (its own [NotificationPayload.duration])
- * or is tapped, it's removed and the rest reflow. Multiple notifications are visible at once.
- *
- * The host should be a top-anchored container; cards manage their own width.
+ * Frost mode (slideshow): when [backdropFactory] is set, each card gets a blurred,
+ * pan-tracked photo backdrop + translucent tint; the host (SlideshowController) drives
+ * those layers via [frostLayers] / [onCardAttached]. Without it (overlay), cards are
+ * solid frosted.
  */
 class NotificationStack(
     private val context: Context,
     private val host: ViewGroup,
-    /** Called with true when the stack becomes non-empty, false when it empties. */
+    private val backdropFactory: (() -> ImageView)? = null,
+    private val onCardAttached: ((FrostLayer) -> Unit)? = null,
     private val onActiveChanged: ((Boolean) -> Unit)? = null
-) {
+) : NotificationCenter.Renderer {
+
     companion object {
-        private const val TAG = "NotificationStack"
         private val DEFAULT_NC = Color.parseColor("#5B8DEF")
-        private val CARD_BG = Color.parseColor("#F212141A")   // opaque frosted
+        private val CARD_BG = Color.parseColor("#F212141A")   // opaque frosted (solid mode)
         private val CARD_BORDER = Color.parseColor("#29FFFFFF")
     }
 
-    private val handler = Handler(Looper.getMainLooper())
-    private val httpClient = OkHttpClient()
+    /** A card's frost layers, exposed so the slideshow can drive the blurred backdrop. */
+    class FrostLayer(val card: FrameLayout, val tint: View, val backdrop: ImageView)
+
+    private val frostEnabled = backdropFactory != null
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
     private class Holder(
-        val card: View,
+        val id: Long,
+        val card: FrameLayout,
         val progressFill: View,
-        val payload: NotificationPayload,
-        var dismiss: Runnable? = null,
-        var animator: ObjectAnimator? = null
+        var animator: ObjectAnimator? = null,
+        val frost: FrostLayer? = null
     )
 
-    private val holders = mutableListOf<Holder>()  // index 0 = top-most (newest)
+    private val holders = mutableListOf<Holder>()  // index 0 = top-most
 
     init {
-        // Smooth add / remove / reflow of the stacked cards.
-        host.layoutTransition = LayoutTransition().apply {
-            setDuration(260)
-        }
+        host.layoutTransition = LayoutTransition().apply { setDuration(260) }
     }
 
-    /** Add a new notification on top of the stack. */
-    fun push(payload: NotificationPayload) {
-        if (payload.sound) playSound()
+    // ---- NotificationCenter.Renderer ----
 
-        val holder = buildCard(payload)
+    override fun show(active: NotificationCenter.Active) {
+        val holder = buildCard(active)
         holders.add(0, holder)
         host.addView(holder.card, 0)
-
-        // Drain the per-card timer bar over its own duration.
-        val durationMs = if (payload.duration > 0) payload.duration * 1000L else 0L
-        if (durationMs > 0) {
-            holder.animator = ObjectAnimator.ofFloat(holder.progressFill, "scaleX", 1f, 0f).apply {
-                duration = durationMs
-                interpolator = LinearInterpolator()
-                start()
-            }
-            val r = Runnable { dismiss(holder) }
-            holder.dismiss = r
-            handler.postDelayed(r, durationMs)
-        }
-
+        startProgress(holder, active)
+        holder.frost?.let { onCardAttached?.invoke(it) }
         if (holders.size == 1) onActiveChanged?.invoke(true)
     }
 
-    /**
-     * Hit-test a tap (screen coords) against the visible cards. If it lands on one,
-     * trigger its callback + dismiss and return true. Used by the slideshow, whose
-     * gesture detector would otherwise consume the tap.
-     */
+    override fun remove(id: Long) {
+        val h = holders.firstOrNull { it.id == id } ?: return
+        h.animator?.cancel()
+        holders.remove(h)
+        host.removeView(h.card)
+        if (holders.isEmpty()) onActiveChanged?.invoke(false)
+    }
+
+    override fun reset(actives: List<NotificationCenter.Active>) {
+        clearViews()
+        // oldest first -> insert each at top so the newest ends up on top
+        for (a in actives) {
+            val holder = buildCard(a)
+            holders.add(0, holder)
+            host.addView(holder.card, 0)
+            startProgress(holder, a)
+            holder.frost?.let { onCardAttached?.invoke(it) }
+        }
+        onActiveChanged?.invoke(holders.isNotEmpty())
+    }
+
+    override fun detach() {
+        clearViews()
+        onActiveChanged?.invoke(false)
+    }
+
+    /** Current cards' frost layers (slideshow drives the blurred backdrops via these). */
+    fun frostLayers(): List<FrostLayer> = holders.mapNotNull { it.frost }
+
+    private fun clearViews() {
+        holders.forEach { it.animator?.cancel() }
+        holders.clear()
+        host.removeAllViews()
+    }
+
+    /** Hit-test a tap against the visible cards (slideshow path, where the gesture
+     *  detector would otherwise consume it). */
     fun handleTap(event: MotionEvent): Boolean {
         val x = event.rawX
         val y = event.rawY
         for (h in holders) {
             if (isInside(h.card, x, y)) {
-                onTap(h)
+                NotificationCenter.dismiss(h.id, true)
                 return true
             }
         }
         return false
     }
 
-    val isActive: Boolean get() = holders.isNotEmpty()
-
-    /** Remove everything (e.g. on teardown). */
-    fun clear() {
-        holders.forEach {
-            it.dismiss?.let { r -> handler.removeCallbacks(r) }
-            it.animator?.cancel()
+    private fun startProgress(holder: Holder, active: NotificationCenter.Active) {
+        if (active.persistent) return
+        val remaining = active.remainingMs()
+        if (remaining <= 0L) return
+        holder.progressFill.scaleX = active.fraction()
+        holder.animator = ObjectAnimator.ofFloat(holder.progressFill, "scaleX", active.fraction(), 0f).apply {
+            duration = remaining
+            interpolator = LinearInterpolator()
+            start()
         }
-        holders.clear()
-        host.removeAllViews()
-    }
-
-    private fun onTap(h: Holder) {
-        fireCallback(h.payload)
-        dismiss(h)
-    }
-
-    private fun dismiss(h: Holder) {
-        if (!holders.remove(h)) return
-        h.dismiss?.let { handler.removeCallbacks(it) }
-        h.animator?.cancel()
-        host.removeView(h.card)  // LayoutTransition animates it out + reflows the rest
-        if (holders.isEmpty()) onActiveChanged?.invoke(false)
-    }
-
-    private fun fireCallback(payload: NotificationPayload) {
-        val url = payload.callbackUrl
-        if (url.isNullOrBlank()) return
-        val method = payload.callbackMethod.uppercase()
-        Thread {
-            try {
-                val b = Request.Builder().url(url)
-                if (method == "GET") b.get()
-                else b.post("{}".toRequestBody("application/json".toMediaType()))
-                httpClient.newCall(b.build()).execute().use { r ->
-                    Log.d(TAG, "Callback ${r.code}")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Callback failed: ${e.message}")
-            }
-        }.start()
     }
 
     private fun isInside(view: View, x: Float, y: Float): Boolean {
@@ -160,19 +140,10 @@ class NotificationStack(
         return x >= loc[0] && x <= loc[0] + view.width && y >= loc[1] && y <= loc[1] + view.height
     }
 
-    private fun playSound() {
-        try {
-            val uri = android.media.RingtoneManager
-                .getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
-            android.media.RingtoneManager.getRingtone(context, uri)?.play()
-        } catch (e: Exception) {
-            Log.e(TAG, "Sound failed: ${e.message}")
-        }
-    }
+    // ---- card construction ----
 
-    // ---- card construction (the shared "Aurora" look) ----
-
-    private fun buildCard(payload: NotificationPayload): Holder {
+    private fun buildCard(active: NotificationCenter.Active): Holder {
+        val payload = active.payload
         val nc = parseColorOrNull(payload.color) ?: DEFAULT_NC
 
         val glyph = MdiIcons.glyph(context, payload.icon) ?: MdiIcons.glyph(context, "bell")
@@ -210,8 +181,7 @@ class NotificationStack(
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(title)
-            addView(message)
+            addView(title); addView(message)
         }
 
         val image = ImageView(context).apply {
@@ -238,7 +208,6 @@ class NotificationStack(
             addView(iconTile); addView(body); addView(image)
         }
 
-        val durationMs = if (payload.duration > 0) payload.duration * 1000L else 0L
         val progressFill = View(context).apply {
             background = rounded(dp(2).toFloat(), nc)
             pivotX = 0f
@@ -249,7 +218,7 @@ class NotificationStack(
             clipToOutline = true
             background = rounded(dp(2).toFloat(), withAlpha(Color.WHITE, 0x24))
             addView(progressFill)
-            visibility = if (durationMs > 0) View.VISIBLE else View.GONE
+            visibility = if (active.persistent) View.GONE else View.VISIBLE
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(3)).apply {
                 gravity = Gravity.BOTTOM; leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(9)
             }
@@ -258,20 +227,46 @@ class NotificationStack(
         val screenW = context.resources.displayMetrics.widthPixels
         val cardW = (screenW * 0.6f).toInt().coerceIn(dp(320), dp(900))
 
+        var frost: FrostLayer? = null
         val card = FrameLayout(context).apply {
             clipToOutline = true
             elevation = dp(12).toFloat()
-            background = rounded(dp(22).toFloat(), CARD_BG)
             foreground = roundedBorder(dp(22).toFloat(), CARD_BORDER)
-            addView(row); addView(progressTrack)
+            if (frostEnabled) {
+                // transparent fill + blurred backdrop + tint layers (host drives them)
+                background = rounded(dp(22).toFloat(), Color.TRANSPARENT)
+                val backdrop = backdropFactory!!.invoke()
+                val tint = View(context).apply {
+                    layoutParams = FrameLayout.LayoutParams(0, 0)
+                }
+                addView(backdrop)
+                addView(tint)
+                addView(row)
+                addView(progressTrack)
+                frost = FrostLayer(this, tint, backdrop)
+                // keep backdrop + tint sized to the card
+                addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+                    val w = r - l; val h = b - t
+                    if (w <= 0 || h <= 0) return@addOnLayoutChangeListener
+                    for (layer in listOf<View>(backdrop, tint)) {
+                        val lp = layer.layoutParams
+                        if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; layer.layoutParams = lp }
+                    }
+                    onCardAttached?.invoke(frost!!)
+                }
+            } else {
+                background = rounded(dp(22).toFloat(), CARD_BG)
+                addView(row)
+                addView(progressTrack)
+            }
             layoutParams = LinearLayout.LayoutParams(cardW, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 bottomMargin = dp(12)
             }
         }
 
-        val holder = Holder(card, progressFill, payload)
-        card.setOnClickListener { onTap(holder) }  // used by the overlay window (direct touch)
+        val holder = Holder(active.id, card, progressFill, frost = frost)
+        card.setOnClickListener { NotificationCenter.dismiss(active.id, true) }  // overlay (direct touch)
         return holder
     }
 

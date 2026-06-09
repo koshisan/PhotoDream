@@ -5,47 +5,41 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.LinearLayout
-import com.google.gson.Gson
-import de.koshi.photodream.model.NotificationPayload
+import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.ui.NotificationStack
 
 /**
- * Shows notifications as a system-overlay window when the slideshow isn't running.
- * The actual cards + stacking are handled by the shared [NotificationStack]; this
- * service just hosts it in a floating window. When the slideshow IS running, the
- * SlideshowController renders the same stack instead.
+ * Hosts the shared notification stack in a floating system-overlay window when the
+ * slideshow isn't running. State (active notifications + timers) lives in
+ * [NotificationCenter]; this service is just the fallback renderer.
  *
- * Requires SYSTEM_ALERT_WINDOW ("draw over other apps") permission.
+ * Requires SYSTEM_ALERT_WINDOW ("draw over other apps").
  */
 class NotificationOverlayService : Service() {
 
     companion object {
         private const val TAG = "NotifOverlay"
-        private const val EXTRA_PAYLOAD = "payload_json"
-        private val gson = Gson()
 
-        /** Show a notification overlay. Returns false if the overlay permission is missing. */
-        fun show(context: Context, payload: NotificationPayload): Boolean {
+        /** Start the overlay (idempotent). It renders whatever the center currently holds. */
+        fun ensure(context: Context) {
             if (!Settings.canDrawOverlays(context)) {
-                Log.w(TAG, "No SYSTEM_ALERT_WINDOW permission - cannot show overlay notification")
-                return false
+                Log.w(TAG, "No SYSTEM_ALERT_WINDOW permission - overlay notifications unavailable")
+                return
             }
-            context.startService(Intent(context, NotificationOverlayService::class.java).apply {
-                putExtra(EXTRA_PAYLOAD, gson.toJson(payload))
-            })
-            return true
+            context.startService(Intent(context, NotificationOverlayService::class.java))
+        }
+
+        fun stop(context: Context) {
+            context.stopService(Intent(context, NotificationOverlayService::class.java))
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
     private var host: LinearLayout? = null
     private var stack: NotificationStack? = null
@@ -55,36 +49,25 @@ class NotificationOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        if (!ensureWindow()) { stopSelf(); return }
+        stack?.let { NotificationCenter.attachOverlay(it) }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val payload = try {
-            intent?.getStringExtra(EXTRA_PAYLOAD)?.let { gson.fromJson(it, NotificationPayload::class.java) }
-        } catch (e: Exception) {
-            Log.e(TAG, "Bad payload: ${e.message}"); null
-        }
-        if (payload == null || payload.message.isBlank()) {
-            if (stack?.isActive != true) stopSelf()
-            return START_NOT_STICKY
-        }
-        ensureWindow()
-        stack?.push(payload)
-        return START_NOT_STICKY
-    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     override fun onDestroy() {
+        stack?.let { NotificationCenter.detachOverlay(it) }
         removeWindow()
         super.onDestroy()
     }
 
-    private fun ensureWindow() {
-        if (host != null) return
+    private fun ensureWindow(): Boolean {
+        if (host != null) return true
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-
         val params = WindowManager.LayoutParams().apply {
             width = WindowManager.LayoutParams.WRAP_CONTENT
             height = WindowManager.LayoutParams.WRAP_CONTENT
@@ -98,27 +81,25 @@ class NotificationOverlayService : Service() {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = (16 * resources.displayMetrics.density).toInt()
         }
-
         try {
             windowManager?.addView(container, params)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay window: ${e.message}", e)
-            stopSelf(); return
+            return false
         }
-
         host = container
-        stack = NotificationStack(this, container) { active ->
-            // When the stack empties, tear the window down (after the out-animation).
-            if (!active) handler.postDelayed({ removeWindow(); stopSelf() }, 320)
-        }
+        // Solid stack (no frost backdrop). When it empties or is detached, tear down.
+        stack = NotificationStack(this, container, onActiveChanged = { active ->
+            if (!active) { NotificationCenter.detachOverlay(stack!!); removeWindow(); stopSelf() }
+        })
+        return true
     }
 
     private fun removeWindow() {
-        stack?.clear()
-        stack = null
         host?.let {
             try { windowManager?.removeView(it) } catch (e: Exception) { /* already gone */ }
         }
         host = null
+        stack = null
     }
 }

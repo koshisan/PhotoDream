@@ -33,8 +33,8 @@ import de.koshi.photodream.model.NotificationPayload
 import android.provider.Settings
 import de.koshi.photodream.util.BrightnessManager
 import de.koshi.photodream.util.BrightnessOverlayService
+import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.util.ConfigManager
-import de.koshi.photodream.util.NotificationOverlayService
 
 /**
  * HTTP Server Service for Home Assistant communication
@@ -116,7 +116,6 @@ class HttpServerService : Service() {
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
     var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
     var onCalendarReceived: ((List<CalendarEvent>) -> Unit)? = null
-    var onShowNotification: ((NotificationPayload) -> Unit)? = null
 
     // Last aggregated calendar events (cached in memory + on disk so a freshly
     // started slideshow can render them immediately after binding, even after a reboot).
@@ -568,22 +567,15 @@ class HttpServerService : Service() {
 
                 Log.i(TAG, "Received notification: '${payload.title}' / '${payload.message.take(60)}'")
 
-                // If the slideshow is running, render the (frosted) in-slideshow card;
-                // otherwise show a system overlay so notifications work anytime.
-                val rich = onShowNotification != null
+                // The NotificationCenter holds the active notifications and routes them to
+                // the slideshow (frosted) or the system overlay (solid), carrying over on
+                // slideshow start/stop. Shows nothing only if neither is available.
                 val canOverlay = Settings.canDrawOverlays(this@HttpServerService)
-                mainHandler.post {
-                    if (rich) {
-                        onShowNotification?.invoke(payload)
-                    } else {
-                        NotificationOverlayService.show(this@HttpServerService, payload)
-                    }
-                }
+                NotificationCenter.init(this@HttpServerService)
+                NotificationCenter.post(payload)
 
                 jsonResponse(mapOf(
                     "success" to true,
-                    "shown" to (rich || canOverlay),
-                    "via" to if (rich) "slideshow" else "overlay",
                     "overlay_permission" to canOverlay
                 ))
             } catch (e: Exception) {

@@ -36,6 +36,7 @@ import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import android.graphics.drawable.GradientDrawable
 import de.koshi.photodream.server.HttpServerService
+import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.ui.NotificationStack
 import de.koshi.photodream.ui.SlideshowRenderer
 import de.koshi.photodream.util.ConfigManager
@@ -106,6 +107,12 @@ class SlideshowController(
 
     // Calendar state
     private var calendarEvents: List<CalendarEvent> = emptyList()
+
+    // Frost state shared by the agenda card AND the notification cards (live blur).
+    private var frostMaster: Bitmap? = null          // latest blurred photo (master copy)
+    private var frostRim: Int = 0                     // adaptive border color
+    private var frostTintColor: Int = 0              // tint color (blur vs video-opaque)
+    private var lastPanMatrix: Matrix? = null
     
     // Update state
     private var pendingUpdateInfo: HttpServerService.UpdateInfo? = null
@@ -217,7 +224,6 @@ class SlideshowController(
                 getPlaylistInfo = { getPlaylistInfoInternal() }
                 onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
                 onCalendarReceived = { events -> applyCalendar(events) }
-                onShowNotification = { payload -> notificationStack.push(payload) }
                 // Check if there's already a pending update
                 pendingUpdate?.let { showUpdateAvailable(it) }
                 // Render any calendar events that arrived before the slideshow started
@@ -241,6 +247,9 @@ class SlideshowController(
     fun start() {
         gestureDetector = GestureDetector(context, gestureListener)
         setupUI()
+        // Become the (preferred) notification renderer; any active notifications carry over.
+        NotificationCenter.init(context)
+        NotificationCenter.attachSlideshow(notificationStack)
         bindHttpService()
         loadConfigAndStart()
     }
@@ -251,7 +260,10 @@ class SlideshowController(
     fun stop() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
-        if (::notificationStack.isInitialized) notificationStack.clear()
+        // Hand active notifications back to the overlay (carry over with remaining time).
+        if (::notificationStack.isInitialized) NotificationCenter.detachSlideshow(notificationStack)
+        frostMaster?.let { if (!it.isRecycled) it.recycle() }
+        frostMaster = null
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
@@ -495,9 +507,16 @@ class SlideshowController(
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.TOP; topMargin = dp(20) }
         }
-        notificationStack = NotificationStack(context, notificationHost) { active ->
-            showTopScrim(active)
-        }
+        notificationStack = NotificationStack(
+            context,
+            notificationHost,
+            backdropFactory = { createBackdrop(22) },         // live frost per card
+            onCardAttached = { layer -> applyFrostToCard(layer) },
+            onActiveChanged = { active ->
+                showTopScrim(active)
+                if (active) setBackdropImage()  // compute the frost source for the new card(s)
+            }
+        )
 
         container.addView(imageContainer)
         container.addView(clockScrim)
@@ -553,7 +572,6 @@ class SlideshowController(
                 getPlaylistInfo = null
                 onUpdateAvailable = null
                 onCalendarReceived = null
-                onShowNotification = null
                 updateStatus(DeviceStatus(online = true, active = false))
             }
             context.unbindService(serviceConnection)
@@ -1794,7 +1812,8 @@ class SlideshowController(
     private var backdropSourceScale = 1f
 
     private fun anyCardVisible(): Boolean =
-        ::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE
+        (::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE) ||
+        (::notificationStack.isInitialized && notificationStack.frostLayers().isNotEmpty())
 
     /**
      * Set the frosted-glass source ONCE per image: a downscaled (and, on API < 31,
@@ -1806,17 +1825,24 @@ class SlideshowController(
      */
     private fun setBackdropImage() {
         if (!anyCardVisible()) return
+        val notifLayers = if (::notificationStack.isInitialized) notificationStack.frostLayers() else emptyList()
 
         val isVideo = playlist.getOrNull(currentIndex)?.type == "VIDEO"
         if (isVideo) {
+            frostMaster?.let { if (!it.isRecycled) it.recycle() }
+            frostMaster = null
+            frostTintColor = AGENDA_FILL_OPAQUE
+            frostRim = AURORA_BORDER
             if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_OPAQUE)
             calendarBackdrop?.visibility = View.INVISIBLE
-            // No photo to sample -> neutral white hairline
             applyCardBorder(calendarCard, AURORA_BORDER)
+            for (l in notifLayers) {
+                l.tint.setBackgroundColor(AGENDA_FILL_OPAQUE)
+                l.backdrop.visibility = View.INVISIBLE
+                applyCardBorder(l.card, AURORA_BORDER)
+            }
             return
         }
-        if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_BLUR)
-        calendarBackdrop?.visibility = View.VISIBLE
 
         val full = (if (::renderer.isInitialized) renderer.currentBitmap() else null) ?: return
         val down = try {
@@ -1830,15 +1856,43 @@ class SlideshowController(
             b
         }
         backdropSourceScale = full.width.toFloat() / out.width.toFloat()
+        frostTintColor = AGENDA_FILL_BLUR
+        frostRim = adaptiveRim(averageColor(out))  // outline "hangs on" the photo
+
+        if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_BLUR)
+        calendarBackdrop?.visibility = View.VISIBLE
         setBackdropBitmap(calendarBackdrop, out)
+        applyCardBorder(calendarCard, frostRim)
 
-        // Adaptive outline: tint the hairline with the (lightened) average background
-        // color so the border "hangs on" the photo behind it.
-        applyCardBorder(calendarCard, adaptiveRim(averageColor(out)))
+        for (l in notifLayers) {
+            l.tint.setBackgroundColor(AGENDA_FILL_BLUR)
+            l.backdrop.visibility = View.VISIBLE
+            setBackdropBitmap(l.backdrop, out)
+            applyCardBorder(l.card, frostRim)
+        }
 
-        out.recycle()
+        // Retain the master copy (the views hold their own copies).
+        frostMaster?.let { if (!it.isRecycled && it !== out) it.recycle() }
+        frostMaster = out
 
         if (::renderer.isInitialized) updateBackdropMatrices(renderer.currentImageMatrix())
+    }
+
+    /** Apply the current frost (blur bitmap, pan matrix, tint, border) to a new
+     *  notification card as it's added (called from the stack's onCardAttached). */
+    private fun applyFrostToCard(layer: NotificationStack.FrostLayer) {
+        val master = frostMaster
+        if (master != null && !master.isRecycled) {
+            layer.tint.setBackgroundColor(frostTintColor)
+            layer.backdrop.visibility = View.VISIBLE
+            if (layer.backdrop.drawable == null) setBackdropBitmap(layer.backdrop, master)
+            applyCardBorder(layer.card, frostRim)
+            lastPanMatrix?.let { applyBackdropMatrix(layer.backdrop, it) }
+        } else {
+            layer.tint.setBackgroundColor(AGENDA_FILL_OPAQUE)
+            layer.backdrop.visibility = View.INVISIBLE
+            applyCardBorder(layer.card, AURORA_BORDER)
+        }
     }
 
     /** Average color of a bitmap via a 1x1 bilinear downscale (cheap). */
@@ -1877,6 +1931,10 @@ class SlideshowController(
 
     /** Mirror the foreground pan matrix onto each backdrop (called per pan frame). */
     private fun updateBackdropMatrices(panMatrix: Matrix) {
+        lastPanMatrix = panMatrix
+        if (::notificationStack.isInitialized) {
+            for (l in notificationStack.frostLayers()) applyBackdropMatrix(l.backdrop, panMatrix)
+        }
         applyBackdropMatrix(calendarBackdrop, panMatrix)
     }
 
