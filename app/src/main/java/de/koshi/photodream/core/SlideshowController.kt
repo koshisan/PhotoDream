@@ -36,6 +36,7 @@ import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import android.graphics.drawable.GradientDrawable
 import de.koshi.photodream.server.HttpServerService
+import de.koshi.photodream.ui.NotificationStack
 import de.koshi.photodream.ui.SlideshowRenderer
 import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
@@ -96,17 +97,8 @@ class SlideshowController(
     private lateinit var calendarTint: View           // translucent frosted fill (agenda)
     private var calendarBackdrop: ImageView? = null   // blurred photo behind agenda (API 31+)
     private lateinit var topScrim: View               // legibility gradient while a notification is up
-    private lateinit var notificationCard: FrameLayout // HA-style notification overlay (Aurora)
-    private lateinit var notifTint: View              // translucent frosted fill (notification)
-    private var notifBackdrop: ImageView? = null      // blurred photo behind notification (API 31+)
-    private lateinit var notifIconTile: FrameLayout
-    private lateinit var notifIcon: TextView          // MDI glyph
-    private lateinit var notifTitle: TextView
-    private lateinit var notifMessage: TextView
-    private lateinit var notifImage: ImageView
-    private lateinit var notifProgressFill: View
-    private lateinit var notifProgressTrack: View
-    private var notifProgressAnimator: ObjectAnimator? = null
+    private lateinit var notificationHost: LinearLayout // hosts the shared notification stack
+    private lateinit var notificationStack: NotificationStack
     private lateinit var renderer: SlideshowRenderer
 
     // Info panel state
@@ -114,11 +106,6 @@ class SlideshowController(
 
     // Calendar state
     private var calendarEvents: List<CalendarEvent> = emptyList()
-
-    // Notification state
-    private var currentNotification: NotificationPayload? = null
-    private var notificationVisible = false
-    private var notificationDismissRunnable: Runnable? = null
     
     // Update state
     private var pendingUpdateInfo: HttpServerService.UpdateInfo? = null
@@ -156,9 +143,8 @@ class SlideshowController(
         private val SWIPE_VELOCITY_THRESHOLD = 100
         
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            // If a notification is showing and the tap landed on it, trigger its callback
-            if (notificationVisible && isTouchInside(notificationCard, e)) {
-                onNotificationTapped()
+            // If a notification card was tapped, trigger its callback (the stack hit-tests)
+            if (::notificationStack.isInitialized && notificationStack.handleTap(e)) {
                 return true
             }
             // If info panel is visible, hide it instead of finishing
@@ -231,7 +217,7 @@ class SlideshowController(
                 getPlaylistInfo = { getPlaylistInfoInternal() }
                 onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
                 onCalendarReceived = { events -> applyCalendar(events) }
-                onShowNotification = { payload -> showNotification(payload) }
+                onShowNotification = { payload -> notificationStack.push(payload) }
                 // Check if there's already a pending update
                 pendingUpdate?.let { showUpdateAvailable(it) }
                 // Render any calendar events that arrived before the slideshow started
@@ -265,8 +251,7 @@ class SlideshowController(
     fun stop() {
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
-        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
-        notifProgressAnimator?.cancel()
+        if (::notificationStack.isInitialized) notificationStack.clear()
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
@@ -501,8 +486,18 @@ class SlideshowController(
             ).apply { gravity = Gravity.TOP }
         }
 
-        // Notification card (HA-style "Aurora" overlay, tappable)
-        buildNotificationCard()
+        // Notification stack (shared with the system-overlay path), top-center, on top
+        notificationHost = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.TOP; topMargin = dp(20) }
+        }
+        notificationStack = NotificationStack(context, notificationHost) { active ->
+            showTopScrim(active)
+        }
 
         container.addView(imageContainer)
         container.addView(clockScrim)
@@ -511,7 +506,7 @@ class SlideshowController(
         container.addView(calendarCard)
         container.addView(infoPanel)
         container.addView(updateBanner)
-        container.addView(notificationCard)  // always on top
+        container.addView(notificationHost)  // always on top
 
         // Initialize renderer
         renderer = SlideshowRenderer(context, imageContainer).apply {
@@ -1710,239 +1705,6 @@ class SlideshowController(
         }
     }
 
-    // --- Notification Overlay ---
-
-    private fun buildNotificationCard() {
-        // Icon tile (54x54, rounded, tinted with the source color)
-        notifIcon = TextView(context).apply {
-            MdiIcons.typeface(context)?.let { typeface = it }
-            textSize = 30f
-            gravity = Gravity.CENTER
-        }
-        notifIconTile = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply { marginEnd = dp(18) }
-            addView(
-                notifIcon,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            )
-        }
-
-        notifTitle = TextView(context).apply {
-            setTextColor(Color.WHITE)
-            textSize = 20f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        notifMessage = TextView(context).apply {
-            setTextColor(withAlpha(Color.WHITE, 0xCC))
-            textSize = 17f
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(3) }
-        }
-        val body = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(notifTitle)
-            addView(notifMessage)
-        }
-
-        notifImage = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            clipToOutline = true
-            visibility = View.GONE
-            background = GradientDrawable().apply {
-                cornerRadius = dp(13).toFloat()
-                setColor(withAlpha(Color.WHITE, 0x14))
-            }
-            layoutParams = LinearLayout.LayoutParams(dp(116), dp(68)).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                marginStart = dp(16)
-            }
-        }
-
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(18), dp(24), dp(20))
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-            addView(notifIconTile)
-            addView(body)
-            addView(notifImage)
-        }
-
-        // Timer/progress bar pinned to the bottom (drains over the display duration)
-        notifProgressFill = View(context).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(2).toFloat()
-                setColor(DEFAULT_NC)
-            }
-            pivotX = 0f
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        notifProgressTrack = FrameLayout(context).apply {
-            clipToOutline = true
-            background = GradientDrawable().apply {
-                cornerRadius = dp(2).toFloat()
-                setColor(withAlpha(Color.WHITE, 0x24))
-            }
-            addView(notifProgressFill)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(3)
-            ).apply {
-                gravity = Gravity.BOTTOM
-                leftMargin = dp(24)
-                rightMargin = dp(24)
-                bottomMargin = dp(9)
-            }
-        }
-
-        // Decorative layers start at 0x0 so they don't inflate the WRAP_CONTENT card;
-        // syncCardLayers() resizes them to the card after layout.
-        notifTint = View(context).apply {
-            setBackgroundColor(NOTIF_FILL_BLUR)
-            layoutParams = FrameLayout.LayoutParams(0, 0)
-        }
-        notifBackdrop = createBackdrop(22)
-
-        notificationCard = FrameLayout(context).apply {
-            visibility = View.GONE
-            clipToOutline = true
-            elevation = dp(12).toFloat()
-            background = roundedTransparent(dp(22).toFloat())
-            foreground = roundedBorder(dp(22).toFloat(), NOTIF_BORDER)
-            addView(notifBackdrop)  // blurred photo
-            addView(notifTint)      // frosted tint
-            addView(row)            // content
-            addView(notifProgressTrack)
-        }
-
-        // Width scales with the screen (design: 760px on a 1280px display)
-        val screenW = context.resources.displayMetrics.widthPixels
-        val cardW = (screenW * 0.6f).toInt().coerceIn(dp(320), dp(900))
-        notificationCard.layoutParams = FrameLayout.LayoutParams(
-            cardW, FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            topMargin = dp(20)
-        }
-        syncCardLayers(notificationCard, notifTint, notifBackdrop)
-    }
-
-    private fun showNotification(payload: NotificationPayload) {
-        if (!::notificationCard.isInitialized) return
-        Log.i(TAG, "Showing notification: '${payload.title}' icon=${payload.icon}")
-
-        currentNotification = payload
-        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
-        notifProgressAnimator?.cancel()
-
-        if (payload.sound) playNotificationSound()
-
-        val nc = parseColorOrNull(payload.color) ?: DEFAULT_NC
-
-        // Icon tile (MDI glyph tinted with the source color; falls back to a bell)
-        val glyph = MdiIcons.glyph(context, payload.icon) ?: MdiIcons.glyph(context, "bell")
-        if (glyph != null) {
-            notifIcon.text = glyph
-            notifIcon.setTextColor(nc)
-            notifIconTile.background = GradientDrawable().apply {
-                cornerRadius = dp(16).toFloat()
-                setColor(withAlpha(nc, 0x38))  // ~22% tint
-            }
-            notifIconTile.visibility = View.VISIBLE
-        } else {
-            notifIconTile.visibility = View.GONE
-        }
-
-        // Title / message
-        if (payload.title.isNullOrBlank()) {
-            notifTitle.visibility = View.GONE
-        } else {
-            notifTitle.text = payload.title
-            notifTitle.visibility = View.VISIBLE
-        }
-        notifMessage.text = payload.message
-
-        // Optional image
-        if (!payload.imageUrl.isNullOrBlank()) {
-            notifImage.visibility = View.VISIBLE
-            try {
-                Glide.with(context).load(payload.imageUrl).centerCrop().into(notifImage)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load notification image: ${e.message}")
-                notifImage.visibility = View.GONE
-            }
-        } else {
-            notifImage.visibility = View.GONE
-        }
-
-        // Progress/timer bar
-        val durationMs = if (payload.duration > 0) payload.duration * 1000L else 0L
-        if (durationMs > 0) {
-            notifProgressTrack.visibility = View.VISIBLE
-            notifProgressFill.scaleX = 1f
-            (notifProgressFill.background as? GradientDrawable)?.setColor(nc)
-            notifProgressAnimator = ObjectAnimator.ofFloat(notifProgressFill, "scaleX", 1f, 0f).apply {
-                duration = durationMs
-                interpolator = LinearInterpolator()
-                start()
-            }
-        } else {
-            notifProgressTrack.visibility = View.GONE
-        }
-
-        // Slide in (with slight overshoot) + top legibility scrim
-        showTopScrim(true)
-        notificationCard.visibility = View.VISIBLE
-        notificationVisible = true
-        notificationCard.alpha = 0f
-        notificationCard.translationY = -dp(160).toFloat()
-        notificationCard.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(500)
-            .setInterpolator(OvershootInterpolator(0.9f))
-            .start()
-        setBackdropImage()
-
-        if (durationMs > 0) {
-            val runnable = Runnable { dismissNotification() }
-            notificationDismissRunnable = runnable
-            handler.postDelayed(runnable, durationMs)
-        }
-    }
-
-    private fun dismissNotification() {
-        if (!::notificationCard.isInitialized) return
-        notificationVisible = false
-        notificationDismissRunnable?.let { handler.removeCallbacks(it) }
-        notificationDismissRunnable = null
-        notifProgressAnimator?.cancel()
-        notifProgressAnimator = null
-        currentNotification = null
-
-        showTopScrim(false)
-        notificationCard.animate()
-            .alpha(0f)
-            .translationY(-dp(160).toFloat())
-            .setDuration(280)
-            .setInterpolator(LinearInterpolator())
-            .withEndAction { notificationCard.visibility = View.GONE }
-            .start()
-    }
 
     private fun showTopScrim(show: Boolean) {
         if (!::topScrim.isInitialized) return
@@ -1955,42 +1717,6 @@ class SlideshowController(
         }
     }
 
-    private fun onNotificationTapped() {
-        val payload = currentNotification
-        Log.d(TAG, "Notification tapped, callback=${payload?.callbackUrl}")
-        dismissNotification()
-
-        val url = payload?.callbackUrl
-        if (url.isNullOrBlank()) return
-
-        val method = payload.callbackMethod.uppercase()
-        // Fire-and-forget on a background thread (scope may be cancelled on finish)
-        Thread {
-            try {
-                val builder = Request.Builder().url(url)
-                if (method == "GET") {
-                    builder.get()
-                } else {
-                    builder.post("{}".toRequestBody("application/json".toMediaType()))
-                }
-                httpClient.newCall(builder.build()).execute().use { response ->
-                    Log.d(TAG, "Notification callback response: ${response.code}")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Notification callback failed: ${e.message}", e)
-            }
-        }.start()
-    }
-
-    private fun playNotificationSound() {
-        try {
-            val uri = android.media.RingtoneManager
-                .getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
-            android.media.RingtoneManager.getRingtone(context, uri)?.play()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to play notification sound: ${e.message}")
-        }
-    }
 
     // --- Small helpers ---
 
@@ -2068,8 +1794,7 @@ class SlideshowController(
     private var backdropSourceScale = 1f
 
     private fun anyCardVisible(): Boolean =
-        (::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE) ||
-        (::notificationCard.isInitialized && notificationCard.visibility == View.VISIBLE)
+        ::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE
 
     /**
      * Set the frosted-glass source ONCE per image: a downscaled (and, on API < 31,
@@ -2085,18 +1810,13 @@ class SlideshowController(
         val isVideo = playlist.getOrNull(currentIndex)?.type == "VIDEO"
         if (isVideo) {
             if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_OPAQUE)
-            if (::notifTint.isInitialized) notifTint.setBackgroundColor(NOTIF_FILL_OPAQUE)
             calendarBackdrop?.visibility = View.INVISIBLE
-            notifBackdrop?.visibility = View.INVISIBLE
             // No photo to sample -> neutral white hairline
             applyCardBorder(calendarCard, AURORA_BORDER)
-            applyCardBorder(notificationCard, NOTIF_BORDER)
             return
         }
         if (::calendarTint.isInitialized) calendarTint.setBackgroundColor(AGENDA_FILL_BLUR)
-        if (::notifTint.isInitialized) notifTint.setBackgroundColor(NOTIF_FILL_BLUR)
         calendarBackdrop?.visibility = View.VISIBLE
-        notifBackdrop?.visibility = View.VISIBLE
 
         val full = (if (::renderer.isInitialized) renderer.currentBitmap() else null) ?: return
         val down = try {
@@ -2111,13 +1831,10 @@ class SlideshowController(
         }
         backdropSourceScale = full.width.toFloat() / out.width.toFloat()
         setBackdropBitmap(calendarBackdrop, out)
-        setBackdropBitmap(notifBackdrop, out)
 
         // Adaptive outline: tint the hairline with the (lightened) average background
         // color so the border "hangs on" the photo behind it.
-        val rim = adaptiveRim(averageColor(out))
-        applyCardBorder(calendarCard, rim)
-        applyCardBorder(notificationCard, rim)
+        applyCardBorder(calendarCard, adaptiveRim(averageColor(out)))
 
         out.recycle()
 
@@ -2161,7 +1878,6 @@ class SlideshowController(
     /** Mirror the foreground pan matrix onto each backdrop (called per pan frame). */
     private fun updateBackdropMatrices(panMatrix: Matrix) {
         applyBackdropMatrix(calendarBackdrop, panMatrix)
-        applyBackdropMatrix(notifBackdrop, panMatrix)
     }
 
     private fun applyBackdropMatrix(backdrop: ImageView?, panMatrix: Matrix) {
@@ -2196,19 +1912,6 @@ class SlideshowController(
         } catch (e: Exception) {
             null
         }
-    }
-
-    /**
-     * Hit-test a touch event (screen coords) against a visible view.
-     */
-    private fun isTouchInside(view: View, e: MotionEvent): Boolean {
-        if (view.visibility != View.VISIBLE) return false
-        val loc = IntArray(2)
-        view.getLocationOnScreen(loc)
-        val x = e.rawX
-        val y = e.rawY
-        return x >= loc[0] && x <= loc[0] + view.width &&
-            y >= loc[1] && y <= loc[1] + view.height
     }
 
     private fun formatDate(isoDate: String): String {
