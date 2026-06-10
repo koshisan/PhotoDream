@@ -46,6 +46,8 @@ data class DisplayConfig(
 
     val calendar: CalendarConfig? = null, // Calendar display settings
 
+    val media: MediaConfig? = null, // Media player display settings
+
     @SerializedName("interval_seconds")
     val intervalSeconds: Int = 30,
     
@@ -157,6 +159,63 @@ data class NotificationPayload(
 
     @SerializedName("callback_method")
     val callbackMethod: String = "POST" // "POST" or "GET"
+)
+
+/**
+ * Media player display configuration (pushed via /configure).
+ * The actual now-playing state is delivered separately via POST /media.
+ */
+data class MediaConfig(
+    // "off" | "compact" | "focus". compact/focus only appear during playback.
+    val mode: String = "off",
+
+    // Optional fanart.tv project key for HD artist backgrounds in focus mode.
+    // Without it, focus mode falls back to TheAudioDB (free, no key).
+    @SerializedName("fanart_api_key")
+    val fanartApiKey: String? = null
+)
+
+/**
+ * Now-playing state from a Home Assistant media_player (POST /media).
+ */
+data class MediaState(
+    val state: String = "idle",   // "playing" | "paused" | "idle" | "off"
+
+    val title: String? = null,    // media_title
+    val artist: String? = null,   // media_artist
+    val source: String? = null,   // e.g. "Spotify · Wohnzimmer"
+
+    @SerializedName("source_icon")
+    val sourceIcon: String? = null, // MDI name, e.g. "spotify" / "speaker" / "youtube" / "radio"
+
+    @SerializedName("cover_url")
+    val coverUrl: String? = null,   // fully-qualified entity_picture URL
+
+    val position: Float? = null,    // media_position (seconds)
+    val duration: Float? = null,    // media_duration (seconds)
+
+    @SerializedName("can_prev")
+    val canPrev: Boolean = true,
+
+    @SerializedName("can_next")
+    val canNext: Boolean = true,
+
+    val controls: MediaControls? = null
+) {
+    val isPlaying: Boolean get() = state.equals("playing", ignoreCase = true)
+    val isActive: Boolean get() = isPlaying || state.equals("paused", ignoreCase = true)
+}
+
+/** Webhook URLs HA provides so the app can control the player (tokenless). */
+data class MediaControls(
+    @SerializedName("play_pause_url")
+    val playPauseUrl: String? = null,
+
+    @SerializedName("next_url")
+    val nextUrl: String? = null,
+
+    @SerializedName("prev_url")
+    val prevUrl: String? = null
 )
 
 data class ProfileConfig(

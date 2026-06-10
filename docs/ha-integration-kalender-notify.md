@@ -174,6 +174,75 @@ response_variable: fc
 
 ---
 
+## 1c. Media-Player („Now Playing")
+
+Zeigt den aktiven `media_player` als Widget. Besteht aus **zwei Teilen**:
+
+### 1c-1) Anzeige-Modus — im `/configure`-Push (`display.media`)
+
+```jsonc
+"display": {
+  // ...
+  "media": {
+    "mode": "compact",          // "off" | "compact" | "focus"
+    "fanart_api_key": "xxxxxxxx" // optional: HD-Künstlerbilder (focus); ohne -> TheAudioDB-Fallback
+  }
+}
+```
+- **off** = Player aus. **compact** = kleine Karte oben links. **focus** = großes Cover mittig,
+  Slideshow läuft (abgedunkelt) weiter, Uhr klein oben links, Agenda blendet aus.
+- Player erscheint **nur bei aktiver Wiedergabe** (`state` playing/paused).
+- `fanart_api_key`: kostenloser fanart.tv-Projekt-Key (für Künstler-Hintergrund im focus-Modus).
+  Ohne Key nutzt die App TheAudioDB (free, keine Registrierung) als Fallback.
+
+### 1c-2) Now-Playing-State — neuer Endpoint `POST /media`
+
+`POST http://<device_ip>:<port>/media` (häufig pushen: bei State-/Track-Wechsel; Position
+wird zwischen Pushes lokal hochgezählt):
+
+```jsonc
+{
+  "state": "playing",                         // playing | paused | idle | off
+  "title": "Bohemian Rhapsody",               // media_title
+  "artist": "Queen",                          // media_artist
+  "source": "Spotify · Wohnzimmer",           // freier Text
+  "source_icon": "spotify",                   // MDI-Name (spotify/speaker/youtube/radio/cast/music …)
+  "cover_url": "https://ha.local/api/media_player_proxy/media_player.spotify?token=...",
+  "position": 73,                             // media_position (Sekunden)
+  "duration": 354,                            // media_duration (Sekunden)
+  "can_prev": true,
+  "can_next": true,
+  "controls": {
+    "play_pause_url": "https://ha.local/api/webhook/mp_kitchen_playpause",
+    "next_url": "https://ha.local/api/webhook/mp_kitchen_next",
+    "prev_url": "https://ha.local/api/webhook/mp_kitchen_prev"
+  }
+}
+```
+
+**Antwort:** `{"success": true, "state": "playing"}`
+
+| Feld          | Typ    | Beschreibung |
+|---------------|--------|--------------|
+| `state`       | string | `playing`/`paused` → Player sichtbar; `idle`/`off` → versteckt |
+| `title`/`artist` | string | Titel / Künstler |
+| `source`      | string | Quelle als Text (z. B. „Spotify · Wohnzimmer") |
+| `source_icon` | string | MDI-Name fürs Quell-Icon |
+| `cover_url`   | string | **voll-qualifizierte** `entity_picture`-URL (Token darf drin sein; App lädt direkt) |
+| `position`/`duration` | number | Sekunden → Fortschrittsbalken (App interpoliert beim Abspielen) |
+| `controls`    | object | **Webhook-URLs**, die die App bei Tap auf Prev/Play-Pause/Next per `POST {}` aufruft |
+
+**App-Verhalten / Steuerung:** Tippt man Prev/Play-Pause/Next, schickt die App ein `POST {}` an
+die jeweilige `controls.*_url`. Lege dafür in HA **Webhooks** an, die `media_player.media_previous_track`
+/ `media_play_pause` / `media_next_track` auf dem Ziel-Entity auslösen. State wird gecacht, eine frisch
+gestartete Slideshow zeigt sofort die laufende Wiedergabe.
+
+**Empfohlene HA-Umsetzung:** Automation auf `media_player`-State-Changes (und alle paar Sekunden bei
+Wiedergabe für die Position) → `/media` pushen; `cover_url` = `state_attr(entity,'entity_picture')` mit
+vorangestellter HA-Basis-URL; drei `webhook`-Trigger für die Transport-Befehle.
+
+---
+
 ## 2. Notification-Overlay
 
 `POST http://<device_ip>:<port>/notify`
@@ -273,6 +342,8 @@ Invoke-RestMethod -Method Post -Uri "http://192.168.1.50:8080/notify" `
       sortieren, an `POST /calendar` pushen (periodisch + bei Änderungen).
 - [ ] **Wetter:** `display.weather` um `temp_low` / `temp_high` erweitern, via
       `weather.get_forecasts` (`type: daily`, Eintrag[0]: `temperature`→high, `templow`→low).
+- [ ] **Media-Player:** `display.media` (`mode`, optional `fanart_api_key`) im `/configure`-Push;
+      `media_player`-State per `POST /media` pushen; 3 Webhooks für Prev/Play-Pause/Next.
 - [ ] `rest_command` (+ optional `notify`/Script-Wrapper) für `POST /notify`.
 - [ ] Webhook(s) für die `callback_url`-Quittierung der Notifications.
 - [ ] Geräte-IP/Port aus dem bestehenden Registrierungs-/Discovery-Mechanismus

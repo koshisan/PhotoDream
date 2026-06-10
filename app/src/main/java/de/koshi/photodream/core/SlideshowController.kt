@@ -36,9 +36,11 @@ import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import android.graphics.drawable.GradientDrawable
 import de.koshi.photodream.server.HttpServerService
+import de.koshi.photodream.ui.MediaPlayerOverlay
 import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.ui.NotificationStack
 import de.koshi.photodream.ui.SlideshowRenderer
+import de.koshi.photodream.util.ArtistImageProvider
 import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
@@ -108,6 +110,15 @@ class SlideshowController(
     // Calendar state
     private var calendarEvents: List<CalendarEvent> = emptyList()
 
+    // Media player
+    private lateinit var mediaPlayerHost: FrameLayout
+    private lateinit var mediaPlayer: MediaPlayerOverlay
+    private lateinit var mediaScrim: View          // focus-mode background dim
+    private lateinit var artistBgView: ImageView   // focus-mode artist background
+    private var mediaState: MediaState? = null
+    private var focusActive = false
+    private var lastArtistForBg: String? = null
+
     // Frost state shared by the agenda card AND the notification cards (live blur).
     private var frostMaster: Bitmap? = null          // latest blurred photo (master copy)
     private var frostRim: Int = 0                     // adaptive border color
@@ -152,6 +163,10 @@ class SlideshowController(
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             // If a notification card was tapped, trigger its callback (the stack hit-tests)
             if (::notificationStack.isInitialized && notificationStack.handleTap(e)) {
+                return true
+            }
+            // Taps on the media player (its buttons handle themselves) shouldn't exit
+            if (::mediaPlayer.isInitialized && mediaPlayer.containsTap(e.rawX, e.rawY)) {
                 return true
             }
             // If info panel is visible, hide it instead of finishing
@@ -224,10 +239,13 @@ class SlideshowController(
                 getPlaylistInfo = { getPlaylistInfoInternal() }
                 onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
                 onCalendarReceived = { events -> applyCalendar(events) }
+                onMediaReceived = { media -> applyMedia(media) }
                 // Check if there's already a pending update
                 pendingUpdate?.let { showUpdateAvailable(it) }
                 // Render any calendar events that arrived before the slideshow started
                 if (lastCalendarEvents.isNotEmpty()) applyCalendar(lastCalendarEvents)
+                // Apply current media state if any
+                lastMediaState?.let { applyMedia(it) }
                 updateStatus(getCurrentStatus())
             }
             serviceBound = true
@@ -262,6 +280,7 @@ class SlideshowController(
         handler.removeCallbacks(slideshowRunnable)
         // Hand active notifications back to the overlay (carry over with remaining time).
         if (::notificationStack.isInitialized) NotificationCenter.detachSlideshow(notificationStack)
+        if (::mediaPlayer.isInitialized) mediaPlayer.apply("off", null)
         frostMaster?.let { if (!it.isRecycled) it.recycle() }
         frostMaster = null
         if (::renderer.isInitialized) {
@@ -518,11 +537,35 @@ class SlideshowController(
             }
         )
 
+        // Media player: artist background (focus), dim scrim, and the player widget host
+        artistBgView = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            alpha = 0f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        }
+        mediaScrim = View(context).apply {
+            visibility = View.GONE
+            alpha = 0f
+            background = makeMediaScrim()
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        }
+        mediaPlayerHost = FrameLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        }
+        mediaPlayer = MediaPlayerOverlay(context, mediaPlayerHost)
+
         container.addView(imageContainer)
+        container.addView(artistBgView)      // focus: artist image over the slideshow
         container.addView(clockScrim)
+        container.addView(mediaScrim)        // focus: background dim
         container.addView(topScrim)
-        container.addView(overlayContainer)
+        container.addView(overlayContainer)  // clock (above the dim)
         container.addView(calendarCard)
+        container.addView(mediaPlayerHost)   // media player widget
         container.addView(infoPanel)
         container.addView(updateBanner)
         container.addView(notificationHost)  // always on top
@@ -572,6 +615,7 @@ class SlideshowController(
                 getPlaylistInfo = null
                 onUpdateAvailable = null
                 onCalendarReceived = null
+                onMediaReceived = null
                 updateStatus(DeviceStatus(online = true, active = false))
             }
             context.unbindService(serviceConnection)
@@ -640,6 +684,7 @@ class SlideshowController(
                         }
                     }
                     setupCalendar(cfg.display)
+                    (httpService?.lastMediaState ?: mediaState)?.let { applyMedia(it) }
                     applyPanSpeed(cfg.display.panSpeed)
                     loadPlaylist(cfg.profile)
                     startSlideshow()
@@ -1131,6 +1176,7 @@ class SlideshowController(
 
         setupClock(newConfig.display)
         setupCalendar(newConfig.display)
+        mediaState?.let { applyMedia(it) }  // mode may have changed
         applyPanSpeed(newConfig.display.panSpeed, reload = oldPanSpeed != newConfig.display.panSpeed)
         resetSlideshowTimer()
         
@@ -1969,6 +2015,107 @@ class SlideshowController(
             Color.parseColor(hex)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    // --- Media player ---
+
+    private fun applyMedia(state: MediaState) {
+        if (!::mediaPlayer.isInitialized) return
+        mediaState = state
+        val mode = config?.display?.media?.mode ?: "off"
+        mediaPlayer.apply(mode, state)
+
+        val focus = mode == "focus" && state.isActive
+        if (focus) {
+            if (!focusActive) {
+                focusActive = true
+                showMediaScrim(true)
+                scaleClockForFocus(true)
+                if (::calendarCard.isInitialized) calendarCard.visibility = View.GONE
+            }
+            updateArtistBg(state)
+        } else if (focusActive) {
+            focusActive = false
+            showMediaScrim(false)
+            scaleClockForFocus(false)
+            renderCalendar()       // restore the agenda
+            hideArtistBg()
+        }
+    }
+
+    private fun showMediaScrim(show: Boolean) {
+        if (!::mediaScrim.isInitialized) return
+        if (show) {
+            mediaScrim.visibility = View.VISIBLE
+            mediaScrim.animate().alpha(1f).setDuration(550).start()
+        } else {
+            mediaScrim.animate().alpha(0f).setDuration(400)
+                .withEndAction { mediaScrim.visibility = View.GONE }.start()
+        }
+    }
+
+    private fun updateArtistBg(state: MediaState) {
+        val artist = state.artist
+        if (artist == lastArtistForBg) return
+        lastArtistForBg = artist
+        if (artist.isNullOrBlank()) { hideArtistBg(); return }
+        val key = config?.display?.media?.fanartApiKey
+        ArtistImageProvider.fetch(artist, key) { url ->
+            if (!focusActive || mediaState?.artist != artist) return@fetch
+            if (url != null) {
+                try { Glide.with(context).load(url).centerCrop().into(artistBgView) } catch (e: Exception) {}
+                artistBgView.visibility = View.VISIBLE
+                artistBgView.animate().alpha(1f).setDuration(700).start()
+            } else {
+                hideArtistBg()
+            }
+        }
+    }
+
+    private fun hideArtistBg() {
+        if (!::artistBgView.isInitialized) return
+        lastArtistForBg = null
+        artistBgView.animate().alpha(0f).setDuration(400)
+            .withEndAction { artistBgView.visibility = View.GONE }.start()
+    }
+
+    /** Focus mode shrinks the clock cluster into the top-left corner. */
+    private fun scaleClockForFocus(active: Boolean) {
+        if (!::overlayContainer.isInitialized) return
+        if (active) {
+            val lp = overlayContainer.layoutParams as FrameLayout.LayoutParams
+            lp.gravity = Gravity.TOP or Gravity.START
+            lp.setMargins(dp(44), dp(40), dp(40), dp(40))
+            overlayContainer.layoutParams = lp
+            overlayContainer.pivotX = 0f
+            overlayContainer.pivotY = 0f
+            overlayContainer.scaleX = 0.6f
+            overlayContainer.scaleY = 0.6f
+        } else {
+            overlayContainer.scaleX = 1f
+            overlayContainer.scaleY = 1f
+            config?.let { setupClock(it.display) }  // restore configured position
+        }
+    }
+
+    private fun makeMediaScrim(): android.graphics.drawable.Drawable {
+        // Gentle radial dim (center readable); linear fallback on very old devices.
+        return try {
+            GradientDrawable().apply {
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                setGradientCenter(0.5f, 0.46f)
+                gradientRadius = maxOf(
+                    context.resources.displayMetrics.widthPixels,
+                    context.resources.displayMetrics.heightPixels
+                ) * 0.72f
+                colors = intArrayOf(withAlpha(Color.BLACK, 0x1F), withAlpha(Color.BLACK, 0x80))
+            }
+        } catch (e: Throwable) {
+            GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(withAlpha(Color.BLACK, 0x33), withAlpha(Color.BLACK, 0x66))
+            )
         }
     }
 

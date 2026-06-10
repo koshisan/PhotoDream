@@ -29,6 +29,7 @@ import de.koshi.photodream.model.CalendarData
 import de.koshi.photodream.model.CalendarEvent
 import de.koshi.photodream.model.DeviceConfig
 import de.koshi.photodream.model.DeviceStatus
+import de.koshi.photodream.model.MediaState
 import de.koshi.photodream.model.NotificationPayload
 import android.provider.Settings
 import de.koshi.photodream.util.BrightnessManager
@@ -116,6 +117,11 @@ class HttpServerService : Service() {
     var getPlaylistInfo: (() -> PlaylistInfo?)? = null
     var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
     var onCalendarReceived: ((List<CalendarEvent>) -> Unit)? = null
+    var onMediaReceived: ((MediaState) -> Unit)? = null
+
+    // Last media state (cached so a freshly started slideshow shows current playback).
+    var lastMediaState: MediaState? = null
+        private set
 
     // Last aggregated calendar events (cached in memory + on disk so a freshly
     // started slideshow can render them immediately after binding, even after a reboot).
@@ -423,6 +429,7 @@ class HttpServerService : Service() {
                     method == Method.POST && uri == "/next" -> handleNext()
                     method == Method.POST && uri == "/set-profile" -> handleSetProfile(session)
                     method == Method.POST && uri == "/calendar" -> handleCalendar(session)
+                    method == Method.POST && uri == "/media" -> handleMedia(session)
                     method == Method.POST && uri == "/notify" -> handleNotify(session)
                     method == Method.POST && uri == "/prepare-update" -> handlePrepareUpdate(session)
                     
@@ -545,6 +552,24 @@ class HttpServerService : Service() {
                     Response.Status.BAD_REQUEST,
                     MIME_PLAINTEXT,
                     "Invalid calendar payload: ${e.message}"
+                )
+            }
+        }
+
+        private fun handleMedia(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+            val postData = body["postData"] ?: "{}"
+            return try {
+                val media = gson.fromJson(postData, MediaState::class.java) ?: MediaState()
+                lastMediaState = media
+                Log.d(TAG, "Media: ${media.state} - ${media.artist} - ${media.title}")
+                mainHandler.post { onMediaReceived?.invoke(media) }
+                jsonResponse(mapOf("success" to true, "state" to media.state))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse media payload: ${e.message}", e)
+                newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid media payload: ${e.message}"
                 )
             }
         }
