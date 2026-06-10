@@ -118,6 +118,7 @@ class SlideshowController(
     private var mediaState: MediaState? = null
     private var focusActive = false
     private var lastArtistForBg: String? = null
+    private var mediaWasShown = false
     private var pausedSince = 0L                       // uptime when playback paused (0 = not paused)
     private val pauseTimeoutMs = 30_000L               // hide the player after this long paused
     private val pauseHideRunnable = Runnable { mediaState?.let { applyMedia(it) } }
@@ -560,7 +561,12 @@ class SlideshowController(
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         }
-        mediaPlayer = MediaPlayerOverlay(context, mediaPlayerHost)
+        mediaPlayer = MediaPlayerOverlay(
+            context,
+            mediaPlayerHost,
+            backdropFactory = { createBackdrop(24) },          // same live frost as the agenda
+            onCardAttached = { layer -> applyFrostToCard(layer) }
+        )
 
         container.addView(imageContainer)
         container.addView(artistBgView)      // focus: artist image over the slideshow
@@ -1550,6 +1556,7 @@ class SlideshowController(
 
         if (cal == null || !cal.enabled || calendarEvents.isEmpty()) {
             calendarCard.visibility = View.GONE
+            repositionMediaPlayer()
             return
         }
 
@@ -1576,7 +1583,12 @@ class SlideshowController(
         }
 
         calendarCard.visibility = View.VISIBLE
+        repositionMediaPlayer()
         setBackdropImage()
+    }
+
+    private fun repositionMediaPlayer() {
+        if (::mediaPlayer.isInitialized) mediaPlayer.reposition(computePlayerGravity())
     }
 
     private fun addAgendaHeader(total: Int) {
@@ -1863,7 +1875,16 @@ class SlideshowController(
 
     private fun anyCardVisible(): Boolean =
         (::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE) ||
-        (::notificationStack.isInitialized && notificationStack.frostLayers().isNotEmpty())
+        (::notificationStack.isInitialized && notificationStack.frostLayers().isNotEmpty()) ||
+        (::mediaPlayer.isInitialized && mediaPlayer.compactFrost != null)
+
+    /** All frosted cards (notifications + compact media player) that the slideshow drives. */
+    private fun extraFrostLayers(): List<NotificationStack.FrostLayer> {
+        val list = mutableListOf<NotificationStack.FrostLayer>()
+        if (::notificationStack.isInitialized) list.addAll(notificationStack.frostLayers())
+        if (::mediaPlayer.isInitialized) mediaPlayer.compactFrost?.let { list.add(it) }
+        return list
+    }
 
     /**
      * Set the frosted-glass source ONCE per image: a downscaled (and, on API < 31,
@@ -1875,7 +1896,7 @@ class SlideshowController(
      */
     private fun setBackdropImage() {
         if (!anyCardVisible()) return
-        val notifLayers = if (::notificationStack.isInitialized) notificationStack.frostLayers() else emptyList()
+        val notifLayers = extraFrostLayers()
 
         val isVideo = playlist.getOrNull(currentIndex)?.type == "VIDEO"
         if (isVideo) {
@@ -1982,9 +2003,7 @@ class SlideshowController(
     /** Mirror the foreground pan matrix onto each backdrop (called per pan frame). */
     private fun updateBackdropMatrices(panMatrix: Matrix) {
         lastPanMatrix = panMatrix
-        if (::notificationStack.isInitialized) {
-            for (l in notificationStack.frostLayers()) applyBackdropMatrix(l.backdrop, panMatrix)
-        }
+        for (l in extraFrostLayers()) applyBackdropMatrix(l.backdrop, panMatrix)
         applyBackdropMatrix(calendarBackdrop, panMatrix)
     }
 
@@ -2031,7 +2050,13 @@ class SlideshowController(
 
         val active = computeActive(state)
         val show = mode != "off" && active
-        if (show) mediaPlayer.apply(mode, state) else mediaPlayer.apply("off", null)
+        if (show) {
+            mediaPlayer.apply(mode, state, computePlayerGravity())
+            if (!mediaWasShown) { mediaWasShown = true; setBackdropImage() }  // frost the new card
+        } else {
+            mediaPlayer.apply("off", null)
+            mediaWasShown = false
+        }
 
         val focus = show && mode == "focus"
         if (focus) {
@@ -2148,6 +2173,42 @@ class SlideshowController(
                 intArrayOf(withAlpha(Color.BLACK, 0x33), withAlpha(Color.BLACK, 0x66))
             )
         }
+    }
+
+    /**
+     * Compact player placement: diagonally opposite the clock; if the agenda is shown
+     * and would overlap, move to the other horizontal side.
+     */
+    private fun computePlayerGravity(): Int {
+        val clockPos = config?.display?.clockPosition ?: 2
+        var pos = diagonalForClock(clockPos)
+        val calVisible = ::calendarCard.isInitialized && calendarCard.visibility == View.VISIBLE
+        if (calVisible) {
+            val calPos = config?.display?.calendar?.position ?: 5
+            if (positionsOverlap(pos, calPos)) pos = movePlayerAwayFrom(pos, calPos)
+        }
+        return gravityForPosition(pos)
+    }
+
+    // position ids: 0 TL,1 TC,2 TR,3 BL,4 BC,5 BR,6 center
+    private fun diagonalForClock(c: Int): Int = when (c) {
+        0 -> 5; 2 -> 3; 3 -> 2; 5 -> 0
+        1 -> 6; 4 -> 6; 6 -> 4
+        else -> 5
+    }
+    private fun vBand(p: Int) = when (p) { in 0..2 -> 0; in 3..5 -> 2; else -> 1 } // 0 top, 2 bottom, 1 mid
+    private fun hSide(p: Int) = when (p) { 0, 3 -> -1; 2, 5 -> 1; else -> 0 }        // -1 left, 0 center, 1 right
+    private fun posFromBandSide(band: Int, side: Int): Int {
+        if (band == 1) return 6
+        val base = if (band == 0) 0 else 3
+        return base + when (side) { -1 -> 0; 1 -> 2; else -> 1 }
+    }
+    private fun positionsOverlap(a: Int, b: Int): Boolean =
+        vBand(a) == vBand(b) && (hSide(a) == hSide(b) || hSide(a) == 0 || hSide(b) == 0)
+    private fun movePlayerAwayFrom(player: Int, cal: Int): Int {
+        if (vBand(player) == 1) return player
+        val newSide = when (hSide(cal)) { 1 -> -1; -1 -> 1; else -> -1 }
+        return posFromBandSide(vBand(player), newSide)
     }
 
     private fun formatDate(isoDate: String): String {

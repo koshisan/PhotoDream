@@ -33,7 +33,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 class MediaPlayerOverlay(
     private val context: Context,
-    private val host: FrameLayout
+    private val host: FrameLayout,
+    private val backdropFactory: (() -> ImageView)? = null,
+    private val onCardAttached: ((NotificationStack.FrostLayer) -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "MediaPlayer"
@@ -46,8 +48,15 @@ class MediaPlayerOverlay(
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
+    private val frostEnabled = backdropFactory != null
     private var builtMode: String? = null
     private var state: MediaState? = null
+
+    private var compactCard: FrameLayout? = null
+    /** Frost layers of the compact card (driven by the slideshow, like the agenda). */
+    var compactFrost: NotificationStack.FrostLayer? = null
+        private set
+    private lateinit var progressTrackView: View
 
     // dynamic view refs (rebuilt per mode)
     private lateinit var cover: ImageView
@@ -85,7 +94,7 @@ class MediaPlayerOverlay(
     /** True if the player is currently shown (active media + mode on). */
     fun isVisible(): Boolean = host.childCount > 0 && (state?.isActive == true)
 
-    fun apply(mode: String, newState: MediaState?) {
+    fun apply(mode: String, newState: MediaState?, compactGravity: Int = Gravity.TOP or Gravity.START) {
         state = newState
         val show = mode != "off" && newState?.isActive == true
         if (!show) { hide(); return }
@@ -93,8 +102,15 @@ class MediaPlayerOverlay(
         if (builtMode != mode) {
             host.removeAllViews()
             stopTicker()
+            compactCard = null
+            compactFrost = null
             if (mode == "focus") buildFocus() else buildCompact()
             builtMode = mode
+        }
+        // Reposition the compact card (diagonal to the clock / dodging the agenda)
+        compactCard?.let {
+            val lp = it.layoutParams as FrameLayout.LayoutParams
+            if (lp.gravity != compactGravity) { lp.gravity = compactGravity; it.layoutParams = lp }
         }
         updateDynamic(newState!!)
     }
@@ -103,7 +119,17 @@ class MediaPlayerOverlay(
         host.removeAllViews()
         stopTicker()
         stopEq()
+        compactCard = null
+        compactFrost = null
         builtMode = null
+    }
+
+    /** Re-anchor the compact card (e.g. when the agenda appears/disappears). */
+    fun reposition(compactGravity: Int) {
+        compactCard?.let {
+            val lp = it.layoutParams as FrameLayout.LayoutParams
+            if (lp.gravity != compactGravity) { lp.gravity = compactGravity; it.layoutParams = lp }
+        }
     }
 
     // ---- dynamic update ----
@@ -128,11 +154,14 @@ class MediaPlayerOverlay(
         // EQ only while playing
         if (s.isPlaying) startEq() else stopEq()
 
-        // progress
+        // progress — only when we actually have duration (e.g. Bluetooth audio often doesn't)
         posBaseSec = s.position ?: 0f
         durSec = s.duration ?: 0f
         baseUptime = SystemClock.uptimeMillis()
-        if (s.isPlaying) startTicker() else { stopTicker(); renderProgress() }
+        if (::progressTrackView.isInitialized) {
+            progressTrackView.visibility = if (durSec > 0f) View.VISIBLE else View.GONE
+        }
+        if (durSec > 0f && s.isPlaying) startTicker() else { stopTicker(); renderProgress() }
     }
 
     private fun renderProgress() {
@@ -235,7 +264,7 @@ class MediaPlayerOverlay(
         title = ellipsisText(18f, Color.WHITE, true)
         artist = ellipsisText(14f, withAlpha(Color.WHITE, 0xBD), false)
         progressFill = View(context).apply { background = rounded(dp(2).toFloat(), Color.WHITE); pivotX = 0f }
-        val progress = progressTrack(progressFill)
+        progressTrackView = progressTrack(progressFill)
 
         val (prev, _) = controlButton(34, "skip-previous", 22f, false); prevBtn = prev
         val (play, pg) = controlButton(40, "play", 24f, true); playBtn = play; playGlyph = pg
@@ -253,25 +282,49 @@ class MediaPlayerOverlay(
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             addView(sourceRow); addView(title); addView(artist)
-            addView(progress, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4)).apply { topMargin = dp(8) })
+            addView(progressTrackView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4)).apply { topMargin = dp(8) })
             addView(controls)
         }
 
-        val card = FrameLayout(context).apply {
+        // content row (padded) — the card itself stays unpadded so the frost layers fill it
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+            addView(coverBox, LinearLayout.LayoutParams(dp(84), dp(84)).apply { marginEnd = dp(16) })
+            addView(textCol)
+        }
+
+        val card = FrameLayout(context).apply {
             clipToOutline = true
-            background = rounded(dp(24).toFloat(), CARD_BG)
             foreground = roundedBorder(dp(24).toFloat(), CARD_BORDER)
             elevation = dp(10).toFloat()
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                addView(coverBox, LinearLayout.LayoutParams(dp(84), dp(84)).apply { marginEnd = dp(16) })
-                addView(textCol)
-            })
+            if (frostEnabled) {
+                // same live frost as the agenda: [blurred backdrop] -> [tint] -> [content]
+                background = rounded(dp(24).toFloat(), Color.TRANSPARENT)
+                val backdrop = backdropFactory!!.invoke()
+                val tint = View(context).apply { layoutParams = FrameLayout.LayoutParams(0, 0) }
+                addView(backdrop); addView(tint); addView(content)
+                compactFrost = NotificationStack.FrostLayer(this, tint, backdrop)
+                addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+                    val w = r - l; val h = b - t
+                    if (w <= 0 || h <= 0) return@addOnLayoutChangeListener
+                    for (layer in listOf<View>(backdrop, tint)) {
+                        val lp = layer.layoutParams
+                        if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; layer.layoutParams = lp }
+                    }
+                    onCardAttached?.invoke(compactFrost!!)
+                }
+            } else {
+                background = rounded(dp(24).toFloat(), CARD_BG)
+                addView(content)
+            }
             layoutParams = FrameLayout.LayoutParams(dp(360), FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP or Gravity.START; setMargins(dp(40), dp(36), 0, 0)
+                gravity = Gravity.TOP or Gravity.START; setMargins(dp(40), dp(36), dp(40), dp(36))
             }
         }
+        compactCard = card
         host.addView(card)
     }
 
@@ -312,7 +365,7 @@ class MediaPlayerOverlay(
         }
 
         progressFill = View(context).apply { background = rounded(dp(3).toFloat(), Color.WHITE); pivotX = 0f }
-        val progress = progressTrack(progressFill)
+        progressTrackView = progressTrack(progressFill)
 
         val (prev, _) = controlButton(60, "skip-previous", 38f, false); prevBtn = prev
         val (play, pg) = controlButton(78, "play", 46f, true); playBtn = play; playGlyph = pg
@@ -332,7 +385,7 @@ class MediaPlayerOverlay(
             addView(title, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) })
             addView(artist, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
             addView(sourceRow)
-            addView(progress, LinearLayout.LayoutParams(dp(440), dp(6)).apply { topMargin = dp(24) })
+            addView(progressTrackView, LinearLayout.LayoutParams(dp(440), dp(6)).apply { topMargin = dp(24) })
             addView(controls)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT
