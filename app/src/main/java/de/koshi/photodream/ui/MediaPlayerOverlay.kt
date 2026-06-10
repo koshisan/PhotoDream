@@ -205,6 +205,17 @@ class MediaPlayerOverlay(
 
     // ---- controls ----
 
+    /** Toggle play/pause: fire the webhook AND flip the icon/EQ immediately (optimistic),
+     *  so it feels responsive even if HA echoes the new state slowly. */
+    private fun onPlayPauseTap() {
+        sendControl(state?.controls?.playPauseUrl)
+        val nowPlaying = state?.isPlaying == true
+        if (::playGlyph.isInitialized) {
+            playGlyph.text = MdiIcons.glyph(context, if (nowPlaying) "play" else "pause") ?: ""
+            if (nowPlaying) stopEq() else startEq()
+        }
+    }
+
     private fun sendControl(url: String?) {
         if (url.isNullOrBlank()) return
         Thread {
@@ -270,7 +281,7 @@ class MediaPlayerOverlay(
         val (play, pg) = controlButton(40, "play", 24f, true); playBtn = play; playGlyph = pg
         val (next, _) = controlButton(34, "skip-next", 22f, false); nextBtn = next
         prevBtn.setOnClickListener { sendControl(state?.controls?.prevUrl) }
-        playBtn.setOnClickListener { sendControl(state?.controls?.playPauseUrl) }
+        playBtn.setOnClickListener { onPlayPauseTap() }
         nextBtn.setOnClickListener { sendControl(state?.controls?.nextUrl) }
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -371,7 +382,7 @@ class MediaPlayerOverlay(
         val (play, pg) = controlButton(78, "play", 46f, true); playBtn = play; playGlyph = pg
         val (next, _) = controlButton(60, "skip-next", 38f, false); nextBtn = next
         prevBtn.setOnClickListener { sendControl(state?.controls?.prevUrl) }
-        playBtn.setOnClickListener { sendControl(state?.controls?.playPauseUrl) }
+        playBtn.setOnClickListener { onPlayPauseTap() }
         nextBtn.setOnClickListener { sendControl(state?.controls?.nextUrl) }
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL

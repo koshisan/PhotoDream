@@ -741,6 +741,8 @@ class HttpServerService : Service() {
                     "version" to it.version,
                     "apk_path" to it.apkPath
                 )},
+                // Last media state exactly as the app parsed it (for diagnosing /media pushes)
+                "media" to lastMediaState,
                 "brightness" to mapOf(
                     "value" to BrightnessManager.getBrightness(),
                     "auto" to BrightnessManager.isAutoBrightnessEnabled(this@HttpServerService),
