@@ -118,6 +118,9 @@ class SlideshowController(
     private var mediaState: MediaState? = null
     private var focusActive = false
     private var lastArtistForBg: String? = null
+    private var pausedSince = 0L                       // uptime when playback paused (0 = not paused)
+    private val pauseTimeoutMs = 30_000L               // hide the player after this long paused
+    private val pauseHideRunnable = Runnable { mediaState?.let { applyMedia(it) } }
 
     // Frost state shared by the agenda card AND the notification cards (live blur).
     private var frostMaster: Bitmap? = null          // latest blurred photo (master copy)
@@ -280,6 +283,7 @@ class SlideshowController(
         handler.removeCallbacks(slideshowRunnable)
         // Hand active notifications back to the overlay (carry over with remaining time).
         if (::notificationStack.isInitialized) NotificationCenter.detachSlideshow(notificationStack)
+        handler.removeCallbacks(pauseHideRunnable)
         if (::mediaPlayer.isInitialized) mediaPlayer.apply("off", null)
         frostMaster?.let { if (!it.isRecycled) it.recycle() }
         frostMaster = null
@@ -2024,9 +2028,12 @@ class SlideshowController(
         if (!::mediaPlayer.isInitialized) return
         mediaState = state
         val mode = config?.display?.media?.mode ?: "off"
-        mediaPlayer.apply(mode, state)
 
-        val focus = mode == "focus" && state.isActive
+        val active = computeActive(state)
+        val show = mode != "off" && active
+        if (show) mediaPlayer.apply(mode, state) else mediaPlayer.apply("off", null)
+
+        val focus = show && mode == "focus"
         if (focus) {
             if (!focusActive) {
                 focusActive = true
@@ -2041,6 +2048,30 @@ class SlideshowController(
             scaleClockForFocus(false)
             renderCalendar()       // restore the agenda
             hideArtistBg()
+        }
+    }
+
+    /**
+     * Whether the player should be visible. Playing -> yes. Paused -> yes, but only
+     * for [pauseTimeoutMs] (some media_players never report idle/off, so the app hides
+     * itself). Idle/off -> no.
+     */
+    private fun computeActive(state: MediaState): Boolean {
+        handler.removeCallbacks(pauseHideRunnable)
+        return when {
+            state.isPlaying -> { pausedSince = 0L; true }
+            state.state.equals("paused", ignoreCase = true) -> {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (pausedSince == 0L) pausedSince = now
+                val elapsed = now - pausedSince
+                if (elapsed >= pauseTimeoutMs) {
+                    false
+                } else {
+                    handler.postDelayed(pauseHideRunnable, pauseTimeoutMs - elapsed)
+                    true
+                }
+            }
+            else -> { pausedSince = 0L; false }  // idle / off / unknown
         }
     }
 

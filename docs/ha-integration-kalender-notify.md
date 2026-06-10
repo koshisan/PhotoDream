@@ -191,7 +191,10 @@ Zeigt den aktiven `media_player` als Widget. Besteht aus **zwei Teilen**:
 ```
 - **off** = Player aus. **compact** = kleine Karte oben links. **focus** = großes Cover mittig,
   Slideshow läuft (abgedunkelt) weiter, Uhr klein oben links, Agenda blendet aus.
-- Player erscheint **nur bei aktiver Wiedergabe** (`state` playing/paused).
+- Player erscheint **nur bei aktiver Wiedergabe**: `playing` → sichtbar; `paused` → sichtbar,
+  aber die App blendet ihn nach **30 s Pause selbst aus** (Sicherheitsnetz für media_player, die
+  nie sauber auf `idle`/`off` wechseln); `idle`/`off` → versteckt. HA sollte State-Wechsel trotzdem
+  pushen (inkl. `idle`/`off`), die App verlässt sich aber nicht darauf.
 - `fanart_api_key`: kostenloser fanart.tv-Projekt-Key (für Künstler-Hintergrund im focus-Modus).
   Ohne Key nutzt die App TheAudioDB (free, keine Registrierung) als Fallback.
 
