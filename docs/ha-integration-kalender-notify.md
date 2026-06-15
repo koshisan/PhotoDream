@@ -211,7 +211,7 @@ wird zwischen Pushes lokal hochgezählt):
   "source": "Spotify · Wohnzimmer",           // freier Text
   "source_icon": "spotify",                   // MDI-Name (spotify/speaker/youtube/radio/cast/music …)
   "cover_url": "https://ha.local/api/media_player_proxy/media_player.spotify?token=...",
-  "position": 73,                             // media_position (Sekunden)
+  "position": 73,                             // LIVE-Position in Sek. (s. u. — nicht roh!)
   "duration": 354,                            // media_duration (Sekunden)
   "can_prev": true,
   "can_next": true,
@@ -232,7 +232,7 @@ wird zwischen Pushes lokal hochgezählt):
 | `source`      | string | Quelle als Text (z. B. „Spotify · Wohnzimmer") |
 | `source_icon` | string | MDI-Name fürs Quell-Icon |
 | `cover_url`   | string | **voll-qualifizierte** `entity_picture`-URL (Token darf drin sein; App lädt direkt) |
-| `position`/`duration` | number | Sekunden → Fortschrittsbalken (App interpoliert beim Abspielen) |
+| `position`/`duration` | number | Sekunden → Fortschrittsbalken. **`position` muss die LIVE-Position sein**, nicht das rohe `media_position` (s. u.). Fehlt `duration`/`<=0`, wird kein Balken gezeigt (z. B. Bluetooth). |
 | `controls`    | object | **Webhook-URLs**, die die App bei Tap auf Prev/Play-Pause/Next per `POST {}` aufruft |
 
 **App-Verhalten / Steuerung:** Tippt man Prev/Play-Pause/Next, schickt die App ein `POST {}` an
@@ -240,9 +240,21 @@ die jeweilige `controls.*_url`. Lege dafür in HA **Webhooks** an, die `media_pl
 / `media_play_pause` / `media_next_track` auf dem Ziel-Entity auslösen. State wird gecacht, eine frisch
 gestartete Slideshow zeigt sofort die laufende Wiedergabe.
 
-**Empfohlene HA-Umsetzung:** Automation auf `media_player`-State-Changes (und alle paar Sekunden bei
-Wiedergabe für die Position) → `/media` pushen; `cover_url` = `state_attr(entity,'entity_picture')` mit
-vorangestellter HA-Basis-URL; drei `webhook`-Trigger für die Transport-Befehle.
+**Empfohlene HA-Umsetzung:** Automation auf `media_player`-**State-Changes** → `/media` pushen;
+`cover_url` = `state_attr(entity,'entity_picture')` mit vorangestellter HA-Basis-URL; drei
+`webhook`-Trigger für die Transport-Befehle.
+
+> **⚠️ Wichtig — `position` als Live-Wert senden:**
+> HAs Attribut `media_position` ist **eingefroren** zwischen State-Changes (es ändert sich nur bei
+> Play/Pause/Seek/Track-Wechsel). Die Live-Position ist:
+> ```jinja
+> {{ (state_attr(entity,'media_position') | float(0))
+>    + (now() - state_attr(entity,'media_position_updated_at')).total_seconds() }}
+> ```
+> Sendet man das rohe `media_position`, klebt/springt der Balken. Mit dem Live-Wert genügt ein Push
+> **pro State-Change** (Play/Pause/Seek/Track) — die App tickt den Balken zwischen den Pushes selbst
+> weiter. Ein 2-s-`time_pattern`-Spam ist **nicht** nötig (und bringt mit rohem `media_position`
+> sogar das Stottern zurück). Bei Track-/State-Wechsel rebasen wir auf den gepushten Wert.
 
 ---
 
