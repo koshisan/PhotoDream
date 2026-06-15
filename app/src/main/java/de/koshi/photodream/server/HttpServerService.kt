@@ -108,16 +108,9 @@ class HttpServerService : Service() {
         currentConfig = config
     }
     
-    // Callbacks for DreamService (set when DreamService binds)
-    var onConfigReceived: ((DeviceConfig) -> Unit)? = null
-    var onRefreshConfig: (() -> Unit)? = null
-    var onNextImage: (() -> Unit)? = null
-    var onSetProfile: ((String) -> Unit)? = null
-    var getStatus: (() -> DeviceStatus)? = null
-    var getPlaylistInfo: (() -> PlaylistInfo?)? = null
-    var onUpdateAvailable: ((UpdateInfo) -> Unit)? = null
-    var onCalendarReceived: ((List<CalendarEvent>) -> Unit)? = null
-    var onMediaReceived: ((MediaState) -> Unit)? = null
+    // Commands are routed to the active slideshow via the process-global SlideshowBridge
+    // (NOT via callbacks set on this bound service). The bound-callback approach went stale
+    // after long runtime -- see SlideshowBridge for the full rationale.
 
     // Last media state (cached so a freshly started slideshow shows current playback).
     var lastMediaState: MediaState? = null
@@ -461,7 +454,7 @@ class HttpServerService : Service() {
         
         private fun handleStatus(): Response {
             // Use callback if DreamService is bound, otherwise use cached status
-            val status = getStatus?.invoke() ?: currentStatus
+            val status = SlideshowBridge.commands()?.status() ?: currentStatus
             return jsonResponse(status)
         }
         
@@ -483,7 +476,7 @@ class HttpServerService : Service() {
                 lastReceivedConfigJson = postData  // Store raw JSON for debugging
                 
                 // Notify active slideshow on main thread (if running)
-                mainHandler.post { onConfigReceived?.invoke(config) }
+                mainHandler.post { SlideshowBridge.commands()?.onConfig(config) }
                 
                 jsonResponse(mapOf("success" to true, "message" to "Config received"))
             } catch (e: Exception) {
@@ -498,13 +491,13 @@ class HttpServerService : Service() {
         
         private fun handleRefreshConfig(): Response {
             // Run callback on main thread
-            mainHandler.post { onRefreshConfig?.invoke() }
+            mainHandler.post { SlideshowBridge.commands()?.onRefreshConfig() }
             return jsonResponse(mapOf("success" to true, "message" to "Config refresh triggered"))
         }
         
         private fun handleNext(): Response {
             // Run callback on main thread (UI operations require main thread)
-            mainHandler.post { onNextImage?.invoke() }
+            mainHandler.post { SlideshowBridge.commands()?.onNext() }
             return jsonResponse(mapOf("success" to true, "message" to "Next image triggered"))
         }
         
@@ -518,7 +511,7 @@ class HttpServerService : Service() {
             
             return if (profile != null) {
                 // Run callback on main thread
-                mainHandler.post { onSetProfile?.invoke(profile) }
+                mainHandler.post { SlideshowBridge.commands()?.onSetProfile(profile) }
                 jsonResponse(mapOf("success" to true, "profile" to profile))
             } else {
                 newFixedLengthResponse(
@@ -543,7 +536,7 @@ class HttpServerService : Service() {
                 Log.i(TAG, "Received ${events.size} calendar events from HA")
 
                 // Notify active slideshow on main thread (if running)
-                mainHandler.post { onCalendarReceived?.invoke(events) }
+                mainHandler.post { SlideshowBridge.commands()?.onCalendar(events) }
 
                 jsonResponse(mapOf("success" to true, "count" to events.size))
             } catch (e: Exception) {
@@ -564,7 +557,7 @@ class HttpServerService : Service() {
                 val media = gson.fromJson(postData, MediaState::class.java) ?: MediaState()
                 lastMediaState = media
                 Log.d(TAG, "Media: ${media.state} - ${media.artist} - ${media.title}")
-                mainHandler.post { onMediaReceived?.invoke(media) }
+                mainHandler.post { SlideshowBridge.commands()?.onMedia(media) }
                 jsonResponse(mapOf("success" to true, "state" to media.state))
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse media payload: ${e.message}", e)
@@ -640,7 +633,7 @@ class HttpServerService : Service() {
                         val updateInfo = UpdateInfo(version, apkFile.absolutePath)
                         pendingUpdate = updateInfo
                         savePendingUpdate(updateInfo)  // Persist to SharedPreferences
-                        mainHandler.post { onUpdateAvailable?.invoke(updateInfo) }
+                        mainHandler.post { SlideshowBridge.commands()?.onUpdateAvailable(updateInfo) }
                         Log.i(TAG, "Update prepared: $version at ${apkFile.absolutePath}")
                     }
                 } catch (e: Exception) {
@@ -699,7 +692,7 @@ class HttpServerService : Service() {
             }
             
             // Get playlist info from controller
-            val playlistInfo = getPlaylistInfo?.invoke()
+            val playlistInfo = SlideshowBridge.commands()?.playlistInfo()
             
             return jsonResponse(mapOf(
                 "status" to "ok",
@@ -711,6 +704,10 @@ class HttpServerService : Service() {
                 "webhook_last_success" to lastWebhookSuccess,
                 "webhook_last_error" to lastWebhookError,
                 "config_loaded" to (currentConfig != null),
+                // True when a live slideshow is registered to receive commands (next_image,
+                // refresh_config, set_profile, ...). If this is false while the slideshow is
+                // visibly rendering, commands are being dropped -- the exact long-runtime bug.
+                "slideshow_bound" to (SlideshowBridge.commands() != null),
                 "device_id" to currentConfig?.deviceId,
                 "playlist" to playlistInfo?.let { mapOf(
                     "current_index" to it.currentIndex,

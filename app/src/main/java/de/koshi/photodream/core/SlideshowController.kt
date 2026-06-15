@@ -36,6 +36,7 @@ import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import android.graphics.drawable.GradientDrawable
 import de.koshi.photodream.server.HttpServerService
+import de.koshi.photodream.server.SlideshowBridge
 import de.koshi.photodream.ui.MediaPlayerOverlay
 import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.ui.NotificationStack
@@ -231,19 +232,28 @@ class SlideshowController(
         }
     }
     
+    // Process-global command target. Registered in start(), unregistered in stop().
+    // This is how HA commands reach the slideshow -- decoupled from the service binding,
+    // which can go stale after long runtime (see SlideshowBridge).
+    private val bridgeCommands = object : SlideshowBridge.Commands {
+        override fun onConfig(config: DeviceConfig) = applyConfigLive(config)
+        override fun onRefreshConfig() = refreshConfig()
+        override fun onNext() = showNextImage()
+        override fun onSetProfile(profile: String) = setProfile(profile)
+        override fun onCalendar(events: List<CalendarEvent>) = applyCalendar(events)
+        override fun onMedia(media: MediaState) = applyMedia(media)
+        override fun onUpdateAvailable(info: HttpServerService.UpdateInfo) = showUpdateAvailable(info)
+        override fun status(): DeviceStatus = getCurrentStatus()
+        override fun playlistInfo(): HttpServerService.PlaylistInfo? = getPlaylistInfoInternal()
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as HttpServerService.LocalBinder
             httpService = localBinder.getService().apply {
-                onConfigReceived = { newConfig -> applyConfigLive(newConfig) }
-                onRefreshConfig = { refreshConfig() }
-                onNextImage = { showNextImage() }
-                onSetProfile = { profile -> setProfile(profile) }
-                getStatus = { getCurrentStatus() }
-                getPlaylistInfo = { getPlaylistInfoInternal() }
-                onUpdateAvailable = { updateInfo -> showUpdateAvailable(updateInfo) }
-                onCalendarReceived = { events -> applyCalendar(events) }
-                onMediaReceived = { media -> applyMedia(media) }
+                // Commands are delivered via SlideshowBridge (registered in start()), not via
+                // callbacks on this binding -- the binding can go stale after long runtime.
+                // The binding is kept only to read cached state and to keep the service alive.
                 // Check if there's already a pending update
                 pendingUpdate?.let { showUpdateAvailable(it) }
                 // Render any calendar events that arrived before the slideshow started
@@ -272,6 +282,9 @@ class SlideshowController(
         // Become the (preferred) notification renderer; any active notifications carry over.
         NotificationCenter.init(context)
         NotificationCenter.attachSlideshow(notificationStack)
+        // Become the active command target BEFORE binding, so HA commands route here even if
+        // the service binding races or the service is re-created later.
+        SlideshowBridge.register(bridgeCommands)
         bindHttpService()
         loadConfigAndStart()
     }
@@ -291,6 +304,8 @@ class SlideshowController(
         if (::renderer.isInitialized) {
             renderer.cleanup()
         }
+        // Step down as command target (identity-checked: won't clear a newer controller).
+        SlideshowBridge.unregister(bridgeCommands)
         // Report inactive BEFORE cancelling scope (needs coroutine)
         unbindHttpService()
         scope.cancel()
@@ -616,18 +631,7 @@ class SlideshowController(
             // Send "inactive" status to HA before unbinding
             reportInactiveToHA()
             
-            httpService?.apply {
-                onConfigReceived = null
-                onRefreshConfig = null
-                onNextImage = null
-                onSetProfile = null
-                getStatus = null
-                getPlaylistInfo = null
-                onUpdateAvailable = null
-                onCalendarReceived = null
-                onMediaReceived = null
-                updateStatus(DeviceStatus(online = true, active = false))
-            }
+            httpService?.updateStatus(DeviceStatus(online = true, active = false))
             context.unbindService(serviceConnection)
             serviceBound = false
             Log.d(TAG, "HttpServerService unbound")
