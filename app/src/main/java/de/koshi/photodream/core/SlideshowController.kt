@@ -283,10 +283,10 @@ class SlideshowController(
         setupUI()
         // Become the (preferred) notification renderer; any active notifications carry over.
         NotificationCenter.init(context)
-        NotificationCenter.attachSlideshow(notificationStack)
+        NotificationCenter.attachSlideshow(notificationStack, ownerAlive)
         // Become the active command target BEFORE binding, so HA commands route here even if
         // the service binding races or the service is re-created later.
-        SlideshowBridge.register(bridgeCommands)
+        SlideshowBridge.register(bridgeCommands, ownerAlive)
         // Tie ownership to the real window lifecycle: re-claim on (re)attach, release on detach
         // so notifications fall back to the overlay window if the dream window tears down
         // abnormally (without onDetachedFromWindow -> stop()).
@@ -294,6 +294,10 @@ class SlideshowController(
         bindHttpService()
         loadConfigAndStart()
     }
+
+    /** Liveness probe handed to the bridge/NotificationCenter so they can tell whether this
+     *  controller is still on-screen (used to decide stale-owner reclaim, never to steal). */
+    private val ownerAlive: () -> Boolean = { container.isAttachedToWindow }
 
     /** Keeps command + notification ownership pinned to the live, on-screen controller. */
     private val ownershipListener = object : View.OnAttachStateChangeListener {
@@ -316,13 +320,18 @@ class SlideshowController(
      */
     private fun ensureOwnership() {
         if (!container.isAttachedToWindow) return
-        if (SlideshowBridge.commands() !== bridgeCommands) {
-            SlideshowBridge.register(bridgeCommands)
-            Log.w(TAG, "Re-claimed command bridge (ownership had been lost)")
+        // Reclaim ONLY from a gone owner -- never steal from another live, on-screen controller,
+        // or two attached controllers would ping-pong ownership and rebuild the cards every tick
+        // (visible flicker). A genuinely dead owner reports !alive via its own isAttachedToWindow.
+        if (SlideshowBridge.commands() !== bridgeCommands && !SlideshowBridge.ownerAlive()) {
+            SlideshowBridge.register(bridgeCommands, ownerAlive)
+            Log.w(TAG, "Re-claimed command bridge (previous owner gone)")
         }
-        if (::notificationStack.isInitialized && !NotificationCenter.isSlideshowRenderer(notificationStack)) {
-            NotificationCenter.attachSlideshow(notificationStack)
-            Log.w(TAG, "Re-claimed notification renderer (ownership had been lost)")
+        if (::notificationStack.isInitialized
+            && !NotificationCenter.isSlideshowRenderer(notificationStack)
+            && !NotificationCenter.slideshowRendererAlive()) {
+            NotificationCenter.attachSlideshow(notificationStack, ownerAlive)
+            Log.w(TAG, "Re-claimed notification renderer (previous owner gone)")
         }
     }
     

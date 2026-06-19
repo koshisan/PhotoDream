@@ -57,6 +57,7 @@ object NotificationCenter {
     private var appContext: Context? = null
 
     private var slideshowRenderer: Renderer? = null
+    private var slideshowAlive: (() -> Boolean)? = null
     private var overlayRenderer: Renderer? = null
     private fun current(): Renderer? = slideshowRenderer ?: overlayRenderer
 
@@ -101,8 +102,12 @@ object NotificationCenter {
     /** True if [r] is the current slideshow renderer (cheap; for self-heal re-claim checks). */
     fun isSlideshowRenderer(r: Renderer): Boolean = slideshowRenderer === r
 
-    fun attachSlideshow(r: Renderer) {
+    /** True if a slideshow renderer is attached AND still on-screen (no check => assumed alive). */
+    fun slideshowRendererAlive(): Boolean = slideshowRenderer != null && (slideshowAlive?.invoke() ?: true)
+
+    fun attachSlideshow(r: Renderer, alive: (() -> Boolean)? = null) {
         slideshowRenderer = r
+        slideshowAlive = alive
         // Slideshow has priority: take the cards away from the overlay window.
         overlayRenderer?.detach()
         appContext?.let { NotificationOverlayService.stop(it) }
@@ -112,6 +117,7 @@ object NotificationCenter {
     fun detachSlideshow(r: Renderer) {
         if (slideshowRenderer !== r) return
         slideshowRenderer = null
+        slideshowAlive = null
         // Hand any still-active notifications back to the overlay window.
         if (actives.isNotEmpty()) appContext?.let { NotificationOverlayService.ensure(it) }
     }

@@ -42,17 +42,27 @@ object SlideshowBridge {
 
     @Volatile
     private var current: Commands? = null
+    @Volatile
+    private var aliveCheck: (() -> Boolean)? = null
 
-    /** Become the active command target. Call from the controller's start(). */
-    fun register(commands: Commands) {
+    /**
+     * Become the active command target. [alive] lets others tell whether this owner is still
+     * on-screen, so a self-healing controller reclaims only from a *gone* owner -- never steals
+     * from a live one (which would cause two attached controllers to ping-pong ownership).
+     */
+    fun register(commands: Commands, alive: (() -> Boolean)? = null) {
         current = commands
+        aliveCheck = alive
     }
 
     /** Step down, but only if still the active target (an older controller must not clear a newer one). */
     fun unregister(commands: Commands) {
-        if (current === commands) current = null
+        if (current === commands) { current = null; aliveCheck = null }
     }
 
     /** The currently-active controller, or null if no slideshow is running. */
     fun commands(): Commands? = current
+
+    /** True if a controller is registered AND still on-screen (no liveness check => assumed alive). */
+    fun ownerAlive(): Boolean = current != null && (aliveCheck?.invoke() ?: true)
 }
