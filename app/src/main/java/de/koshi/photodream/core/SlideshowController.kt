@@ -219,13 +219,15 @@ class SlideshowController(
     
     private val clockRunnable = object : Runnable {
         override fun run() {
+            ensureOwnership()   // self-heal: reclaim command/notification ownership if lost
             updateClock()
             handler.postDelayed(this, 1000)
         }
     }
-    
+
     private val slideshowRunnable = object : Runnable {
         override fun run() {
+            ensureOwnership()   // self-heal from the timer proven to keep running
             showNextImage()
             val interval = (config?.display?.intervalSeconds ?: 30) * 1000L
             handler.postDelayed(this, interval)
@@ -285,14 +287,50 @@ class SlideshowController(
         // Become the active command target BEFORE binding, so HA commands route here even if
         // the service binding races or the service is re-created later.
         SlideshowBridge.register(bridgeCommands)
+        // Tie ownership to the real window lifecycle: re-claim on (re)attach, release on detach
+        // so notifications fall back to the overlay window if the dream window tears down
+        // abnormally (without onDetachedFromWindow -> stop()).
+        container.addOnAttachStateChangeListener(ownershipListener)
         bindHttpService()
         loadConfigAndStart()
+    }
+
+    /** Keeps command + notification ownership pinned to the live, on-screen controller. */
+    private val ownershipListener = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) { ensureOwnership() }
+        override fun onViewDetachedFromWindow(v: View) {
+            SlideshowBridge.unregister(bridgeCommands)
+            if (::notificationStack.isInitialized) NotificationCenter.detachSlideshow(notificationStack)
+        }
+    }
+
+    /**
+     * Re-assert ownership of the command bridge and notification renderer if it was lost.
+     *
+     * This is the cure for "after long runtime the tablet ignores commands": a Daydream
+     * restart race or an activity overlaying the dream could leave a dead controller
+     * registered, so HA commands and notifications went to off-screen views while the HTTP
+     * server still answered 200. Called every tick from the timers that are PROVEN to keep
+     * running (the slideshow visibly auto-advances), guarded by isAttachedToWindow so only the
+     * on-screen controller re-claims -- a detached zombie never steals ownership back.
+     */
+    private fun ensureOwnership() {
+        if (!container.isAttachedToWindow) return
+        if (SlideshowBridge.commands() !== bridgeCommands) {
+            SlideshowBridge.register(bridgeCommands)
+            Log.w(TAG, "Re-claimed command bridge (ownership had been lost)")
+        }
+        if (::notificationStack.isInitialized && !NotificationCenter.isSlideshowRenderer(notificationStack)) {
+            NotificationCenter.attachSlideshow(notificationStack)
+            Log.w(TAG, "Re-claimed notification renderer (ownership had been lost)")
+        }
     }
     
     /**
      * Stop the slideshow. Call this when the activity/service is destroyed.
      */
     fun stop() {
+        container.removeOnAttachStateChangeListener(ownershipListener)
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
         // Hand active notifications back to the overlay (carry over with remaining time).

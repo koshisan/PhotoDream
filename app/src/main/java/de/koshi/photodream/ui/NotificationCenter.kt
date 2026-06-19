@@ -98,6 +98,9 @@ object NotificationCenter {
 
     // ---- renderer registration ----
 
+    /** True if [r] is the current slideshow renderer (cheap; for self-heal re-claim checks). */
+    fun isSlideshowRenderer(r: Renderer): Boolean = slideshowRenderer === r
+
     fun attachSlideshow(r: Renderer) {
         slideshowRenderer = r
         // Slideshow has priority: take the cards away from the overlay window.
