@@ -588,6 +588,11 @@ class SlideshowController(
         notificationHost = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            // A FrameLayout draws siblings by elevation (Z) first, child-index only as tiebreaker.
+            // The agenda card has elevation dp(10) and would otherwise paint over the notification
+            // (added last). Lift the whole host above every other overlay so notifications are
+            // always on the very top layer.
+            elevation = dp(32).toFloat()
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
