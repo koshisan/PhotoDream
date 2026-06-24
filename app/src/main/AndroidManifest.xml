@@ -57,6 +57,23 @@
             </intent-filter>
         </activity>
 
+        <!-- Separate launcher entry that opens straight into the slideshow.
+             Gives a "PhotoDream Slideshow" home-screen icon and lets kiosk launchers
+             (e.g. Fully Kiosk "Start Application") jump directly into the slideshow,
+             without a leftover browser tab. -->
+        <activity-alias
+            android:name=".SlideshowLauncher"
+            android:targetActivity=".SlideshowActivity"
+            android:exported="true"
+            android:label="@string/slideshow_app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- DreamService (Screensaver) -->
         <service
             android:name=".dream.PhotoDreamService"
