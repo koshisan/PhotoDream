@@ -73,6 +73,10 @@ class SlideshowRenderer(
     // Callbacks
     var onImageShown: ((Asset) -> Unit)? = null
     var onImageError: ((String) -> Unit)? = null
+    // Fired once when the current video has played through one full time (used by the
+    // controller's "always play full video" option to defer advancing until then).
+    var onVideoFirstPlayComplete: ((Asset) -> Unit)? = null
+    private var firstPlayListener: Player.Listener? = null
 
     // Called on every pan animation frame with the current image matrix (full bitmap
     // -> screen). Lets overlays mirror the Ken Burns pan smoothly for frosted backdrops.
@@ -255,6 +259,30 @@ DefaultLoadControl.Builder()
         player.volume = 0f // Muted
         player.prepare()
         player.play()
+
+        // Report the first full play-through. With REPEAT_MODE_ONE the loop point surfaces as
+        // an AUTO_TRANSITION position discontinuity; STATE_ENDED covers a non-looping config.
+        // One-shot per video, and we drop the previous video's listener so it can't fire late.
+        firstPlayListener?.let { player.removeListener(it) }
+        val fpl = object : Player.Listener {
+            private fun done() {
+                player.removeListener(this)
+                if (firstPlayListener === this) firstPlayListener = null
+                onVideoFirstPlayComplete?.invoke(asset)
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION) done()
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) done()
+            }
+        }
+        firstPlayListener = fpl
+        player.addListener(fpl)
 
         // Track if first frame already rendered (for fast-loading videos)
         var firstFrameRendered = false
@@ -676,6 +704,7 @@ DefaultLoadControl.Builder()
      * Called when transitioning away from video to reclaim codec memory.
      */
     private fun releasePlayer() {
+        firstPlayListener = null
         exoPlayer?.release()
         exoPlayer = null
         playerView?.player = null

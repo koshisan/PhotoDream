@@ -53,7 +53,18 @@ data class DisplayConfig(
     
     @SerializedName("pan_speed")
     val panSpeed: Float = 0.5f, // Ken Burns effect speed
-    
+
+    // Only load images/videos whose aspect ratio roughly matches the display (same ~20%
+    // tolerance the video renderer uses before it shows letterbox bars). Assets with unknown
+    // dimensions are kept.
+    @SerializedName("skip_wrong_aspect")
+    val skipWrongAspect: Boolean = false,
+
+    // Don't cut a video off when the slideshow timer expires - let it play to the end first
+    // (advance at the later of: interval elapsed, or one full play-through).
+    @SerializedName("always_play_full_video")
+    val alwaysPlayFullVideo: Boolean = false,
+
     val mode: String = "smart_shuffle" // display mode
 )
 

@@ -366,6 +366,27 @@ Invoke-RestMethod -Method Post -Uri "http://192.168.1.50:8080/notify" `
 
 ---
 
+## 4b. Slideshow-Anzeigeoptionen — im `/configure`-Push
+
+Zwei optionale Bool-Felder direkt im `display`-Objekt der `DeviceConfig`:
+
+```jsonc
+"display": {
+  // ... bestehende Felder (clock, weather, interval_seconds, pan_speed, mode, ...) ...
+  "skip_wrong_aspect": false,       // nur Medien laden, deren Format ~zum Display passt
+  "always_play_full_video": false   // Video nicht abbrechen, erst zu Ende spielen
+}
+```
+
+| Feld                      | Typ  | Default | Beschreibung |
+|---------------------------|------|---------|--------------|
+| `skip_wrong_aspect`       | bool | `false` | Lädt nur Bilder/Videos, deren Seitenverhältnis bis ~20 % zum Display passt (gleiche Grenze, ab der Videos sonst Balken bekommen). Medien ohne bekannte Maße werden behalten. Greift bei Profilwechsel **und** beim Umschalten dieses Flags sofort (Playlist wird neu geladen). |
+| `always_play_full_video`  | bool | `false` | Läuft der Slideshow-Timer ab, während ein Video spielt, wird **nicht** abgebrochen — es wird erst einmal komplett zu Ende gespielt, dann weitergeschaltet (Vorschub = später von beiden: Intervall **oder** ein voller Durchlauf). Kurze Videos loopen wie bisher bis zum Intervall. |
+
+> `skip_wrong_aspect` nutzt `exifInfo` (Breite/Höhe inkl. Orientierung) aus den Immich-Suchergebnissen — HA muss dafür nichts liefern, die App holt das direkt von Immich.
+
+---
+
 ## 5. Referenz: App-seitige Definition
 
 Die maßgeblichen Datenklassen (Feldnamen via `@SerializedName`) liegen in

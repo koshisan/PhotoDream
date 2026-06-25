@@ -72,6 +72,9 @@ class SlideshowController(
         private val GOLD = Color.parseColor("#E0C16A")          // warm gold day labels
         private val DEFAULT_NC = Color.parseColor("#5B8DEF")    // fallback notification color
         private val DOT_DEFAULT = Color.parseColor("#9AA3AD")   // fallback calendar dot
+        // Max relative aspect-ratio difference for "skip wrong aspect ratio" (matches the
+        // video renderer's letterbox cutoff in SlideshowRenderer.showVideo).
+        private const val ASPECT_TOLERANCE = 0.20f
         private val NOTIF_BORDER = Color.parseColor("#29FFFFFF") // ~0.16 hairline
         private val AURORA_BORDER = Color.parseColor("#24FFFFFF") // ~0.14 hairline
         // Frosted fill: more translucent when a real backdrop blur is available (API 31+),
@@ -225,13 +228,30 @@ class SlideshowController(
         }
     }
 
+    // "Always play full video": set true once the current video has played through once.
+    private var videoFirstPlayDone = false
+    // Timer fired while a full-play video was still running -> advance when it finishes.
+    private var pendingVideoAdvance = false
+
     private val slideshowRunnable = object : Runnable {
         override fun run() {
             ensureOwnership()   // self-heal from the timer proven to keep running
+            // Don't cut a video off mid-play when "always play full video" is on: defer the
+            // advance until the video finishes one full play (onVideoFirstPlayComplete).
+            if (shouldDeferAdvanceForVideo()) {
+                pendingVideoAdvance = true
+                return  // no reschedule; the video-complete callback drives the next advance
+            }
             showNextImage()
             val interval = (config?.display?.intervalSeconds ?: 30) * 1000L
             handler.postDelayed(this, interval)
         }
+    }
+
+    private fun shouldDeferAdvanceForVideo(): Boolean {
+        if (config?.display?.alwaysPlayFullVideo != true) return false
+        val asset = playlist.getOrNull(currentIndex) ?: return false
+        return asset.type == "VIDEO" && !videoFirstPlayDone
     }
     
     // Process-global command target. Registered in start(), unregistered in stop().
@@ -662,6 +682,28 @@ class SlideshowController(
             
             onImageError = { error ->
                 Log.e(TAG, "Image load error: $error")
+                // Never get stuck waiting for a video that failed to play ("always play full
+                // video"): treat it as finished and advance if the timer was already waiting.
+                videoFirstPlayDone = true
+                if (pendingVideoAdvance) {
+                    pendingVideoAdvance = false
+                    handler.post { showNextImage() }
+                }
+            }
+
+            // A video has played through once. If the slideshow timer already fired while it
+            // was playing ("always play full video"), advance now; otherwise just remember it
+            // so the timer advances normally at the interval (short videos keep looping).
+            onVideoFirstPlayComplete = { asset ->
+                handler.post {
+                    if (playlist.getOrNull(currentIndex)?.id == asset.id) {
+                        videoFirstPlayDone = true
+                        if (pendingVideoAdvance) {
+                            pendingVideoAdvance = false
+                            showNextImage()
+                        }
+                    }
+                }
             }
 
             // Mirror the Ken Burns pan onto the frosted backdrops each frame (cheap).
@@ -1007,10 +1049,28 @@ class SlideshowController(
                 }
             }
             
+            // Optionally drop assets whose aspect ratio doesn't roughly match the display.
+            // Same ~20% tolerance the video renderer uses before it letterboxes (see showVideo).
+            val aspectFiltered = if (config?.display?.skipWrongAspect == true) {
+                val dm = context.resources.displayMetrics
+                val displayRatio = dm.widthPixels.toFloat() / dm.heightPixels.toFloat()
+                val kept = filtered.filter { asset ->
+                    val r = asset.displayAspectRatio() ?: return@filter true  // unknown -> keep
+                    Math.abs(r - displayRatio) / displayRatio <= ASPECT_TOLERANCE
+                }
+                if (kept.isEmpty()) {
+                    Log.w(TAG, "skipWrongAspect removed all ${filtered.size} assets; keeping unfiltered to avoid a blank slideshow")
+                    filtered
+                } else {
+                    Log.i(TAG, "skipWrongAspect: kept ${kept.size}/${filtered.size} (display ratio ${"%.2f".format(displayRatio)})")
+                    kept
+                }
+            } else filtered
+
             // For sequential mode, keep order as-is. For others, already randomized by API
-            playlist = filtered
+            playlist = aspectFiltered
             currentIndex = 0
-            
+
             Log.i(TAG, "Loaded playlist with ${playlist.size} images (mode: $displayMode, page: $currentPage, hasMore: $hasMorePages)")
         }
     }
@@ -1074,6 +1134,10 @@ class SlideshowController(
         val asset = playlist[currentIndex]
         val cfg = config ?: return
         val intervalMs = cfg.display.intervalSeconds * 1000L
+
+        // Reset full-video tracking for the newly shown asset.
+        videoFirstPlayDone = false
+        pendingVideoAdvance = false
 
         if (asset.type == "VIDEO") {
             renderer.showVideo(
@@ -1235,6 +1299,7 @@ class SlideshowController(
         val oldProfileId = config?.profile?.id
         val newProfileId = newConfig.profile.id
         val oldPanSpeed = config?.display?.panSpeed
+        val oldSkipAspect = config?.display?.skipWrongAspect
         
         Log.i(TAG, "Profile check: old='$oldProfileId' new='$newProfileId' changed=${oldProfileId != newProfileId}")
         
@@ -1246,8 +1311,12 @@ class SlideshowController(
         applyPanSpeed(newConfig.display.panSpeed, reload = oldPanSpeed != newConfig.display.panSpeed)
         resetSlideshowTimer()
         
-        if (oldProfileId != newProfileId) {
-            Log.i(TAG, "Profile changed from $oldProfileId to $newProfileId (${newConfig.profile.name}), reloading playlist")
+        val aspectToggled = oldSkipAspect != newConfig.display.skipWrongAspect
+        if (oldProfileId != newProfileId || aspectToggled) {
+            val why = if (oldProfileId != newProfileId)
+                "profile changed from $oldProfileId to $newProfileId (${newConfig.profile.name})"
+            else "skipWrongAspect toggled to ${newConfig.display.skipWrongAspect}"
+            Log.i(TAG, "Reloading playlist: $why")
             scope.launch {
                 immichClient = ImmichClient(newConfig.immich)
                 loadPlaylist(newConfig.profile)

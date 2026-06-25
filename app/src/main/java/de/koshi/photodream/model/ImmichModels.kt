@@ -33,10 +33,30 @@ data class Asset(
     val localDateTime: String? = null,
     
     val type: String = "IMAGE", // IMAGE or VIDEO
-    
+
     @SerializedName("thumbhash")
-    val thumbhash: String? = null
+    val thumbhash: String? = null,
+
+    // Present in /api/search/* and /api/search/random results; used for aspect-ratio filtering.
+    @SerializedName("exifInfo")
+    val exifInfo: ExifInfo? = null
 ) {
+    /**
+     * Width/height aspect ratio as it will be DISPLAYED (accounting for EXIF orientation),
+     * or null if the dimensions are unknown. Orientation 5..8 means a 90/270 rotation, which
+     * swaps the effective width and height.
+     */
+    fun displayAspectRatio(): Float? {
+        val w = exifInfo?.exifImageWidth ?: return null
+        val h = exifInfo?.exifImageHeight ?: return null
+        if (w <= 0 || h <= 0) return null
+        val rotated = when (exifInfo.orientation?.trim()) {
+            "5", "6", "7", "8" -> true
+            else -> false
+        }
+        return if (rotated) h.toFloat() / w.toFloat() else w.toFloat() / h.toFloat()
+    }
+
     /**
      * Get thumbnail URL for this asset
      */
@@ -142,9 +162,17 @@ data class ExifInfo(
     val city: String? = null,
     val state: String? = null,
     val country: String? = null,
-    
+
     @SerializedName("dateTimeOriginal")
-    val dateTimeOriginal: String? = null
+    val dateTimeOriginal: String? = null,
+
+    @SerializedName("exifImageWidth")
+    val exifImageWidth: Int? = null,    // original pixel width  (also set for videos)
+
+    @SerializedName("exifImageHeight")
+    val exifImageHeight: Int? = null,   // original pixel height
+
+    val orientation: String? = null     // EXIF orientation 1..8; 5..8 mean 90/270 rotation
 )
 
 /**
