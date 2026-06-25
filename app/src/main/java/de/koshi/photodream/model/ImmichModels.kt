@@ -192,7 +192,11 @@ data class SmartSearchRequest(
  * Used for random and smart_shuffle display modes
  */
 data class RandomSearchRequest(
-    val count: Int = 250,
+    // Immich's POST /api/search/random expects "size" (1..1000) for the result count.
+    // Sending "count" was silently ignored -> Immich used its small default, shrinking the
+    // pool so the same photos kept recurring.
+    @SerializedName("size")
+    val size: Int = 250,
     val type: String? = null,
     
     @SerializedName("personIds")

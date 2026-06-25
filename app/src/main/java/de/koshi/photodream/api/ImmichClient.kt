@@ -236,7 +236,7 @@ class ImmichClient(private val config: ImmichConfig) {
     private suspend fun searchWithRandomApi(filter: SearchFilter?, count: Int, apiType: String? = "IMAGE"): List<Asset> {
         return try {
             val request = RandomSearchRequest(
-                count = count,
+                size = count,
                 type = apiType ?: filter?.type,
                 personIds = filter?.personIds,
                 tagIds = filter?.tagIds,
@@ -250,7 +250,9 @@ class ImmichClient(private val config: ImmichConfig) {
                 isFavorite = filter?.isFavorite
             )
             val assets = api.randomSearch(request)
-            Log.d(TAG, "Random search returned ${assets.size} results")
+            // Verification aid: requested vs. returned + a sample of IDs. Compare the sample
+            // across restarts -- it should differ every time if randomization is working.
+            Log.i(TAG, "Random search: requested $count, got ${assets.size}, sample=${assets.take(5).map { it.id.take(8) }}")
             assets
         } catch (e: Exception) {
             Log.e(TAG, "Random search failed: ${e.message}", e)
