@@ -108,7 +108,7 @@ class ImmichClient(private val config: ImmichConfig) {
             type = apiType ?: filter.type,
             personIds = filter.personIds,
             tagIds = filter.tagIds,
-            albumId = filter.albumId,
+            albumIds = filter.albumId?.let { listOf(it) },
             city = filter.city,
             country = filter.country,
             state = filter.state,
@@ -212,7 +212,7 @@ class ImmichClient(private val config: ImmichConfig) {
                 type = apiType ?: filter.type,
                 personIds = filter.personIds,
                 tagIds = filter.tagIds,
-                albumId = filter.albumId,
+                albumIds = filter.albumId?.let { listOf(it) },
                 city = filter.city,
                 country = filter.country,
                 state = filter.state,
@@ -240,7 +240,7 @@ class ImmichClient(private val config: ImmichConfig) {
                 type = apiType ?: filter?.type,
                 personIds = filter?.personIds,
                 tagIds = filter?.tagIds,
-                albumId = filter?.albumId,
+                albumIds = filter?.albumId?.let { listOf(it) },
                 city = filter?.city,
                 country = filter?.country,
                 state = filter?.state,
@@ -256,6 +256,9 @@ class ImmichClient(private val config: ImmichConfig) {
             assets
         } catch (e: Exception) {
             Log.e(TAG, "Random search failed: ${e.message}", e)
+            // Never fall back to the unfiltered endpoint when a filter is set
+            // (e.g. SFW profiles) - showing nothing beats showing everything
+            if (hasFilter(filter)) return emptyList()
             // Fallback to deprecated endpoint for older Immich versions
             try {
                 Log.i(TAG, "Falling back to deprecated /api/assets/random")

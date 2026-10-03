@@ -190,8 +190,9 @@ data class SmartSearchRequest(
     @SerializedName("tagIds")
     val tagIds: List<String>? = null,
     
-    @SerializedName("albumId")
-    val albumId: String? = null,
+    // Immich ignores a singular "albumId" and returns ALL assets; must be "albumIds"
+    @SerializedName("albumIds")
+    val albumIds: List<String>? = null,
     
     @SerializedName("city")
     val city: String? = null,
@@ -233,8 +234,9 @@ data class RandomSearchRequest(
     @SerializedName("tagIds")
     val tagIds: List<String>? = null,
     
-    @SerializedName("albumId")
-    val albumId: String? = null,
+    // Immich ignores a singular "albumId" and returns ALL assets; must be "albumIds"
+    @SerializedName("albumIds")
+    val albumIds: List<String>? = null,
     
     @SerializedName("city")
     val city: String? = null,
