@@ -762,7 +762,10 @@ class HttpServerService : Service() {
                 )
             }
             
-            if (apiKey.isNullOrBlank()) {
+            // Public sources (Flickr) need no key - and must not receive the Immich one
+            val immichBase = currentConfig?.immich?.baseUrl
+            val isImmich = !immichBase.isNullOrBlank() && imageUrl.startsWith(immichBase)
+            if (isImmich && apiKey.isNullOrBlank()) {
                 return newFixedLengthResponse(
                     Response.Status.INTERNAL_ERROR,
                     MIME_PLAINTEXT,
@@ -770,11 +773,11 @@ class HttpServerService : Service() {
                 )
             }
             
-            // Fetch image from Immich with authentication
+            // Fetch image (from Immich with authentication)
             return try {
                 val request = okhttp3.Request.Builder()
                     .url(imageUrl)
-                    .addHeader("x-api-key", apiKey)
+                    .apply { if (isImmich) addHeader("x-api-key", apiKey!!) }
                     .build()
                 
                 val response = okhttp3.OkHttpClient().newCall(request).execute()

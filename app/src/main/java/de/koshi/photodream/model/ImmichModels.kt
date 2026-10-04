@@ -39,7 +39,10 @@ data class Asset(
 
     // Present in /api/search/* and /api/search/random results; used for aspect-ratio filtering.
     @SerializedName("exifInfo")
-    val exifInfo: ExifInfo? = null
+    val exifInfo: ExifInfo? = null,
+
+    // Public image URL for non-Immich sources (Flickr); loaded without Immich auth
+    val directUrl: String? = null
 ) {
     /**
      * Width/height aspect ratio as it will be DISPLAYED (accounting for EXIF orientation),
@@ -61,6 +64,7 @@ data class Asset(
      * Get thumbnail URL for this asset
      */
     fun getThumbnailUrl(baseUrl: String, size: ThumbnailSize = ThumbnailSize.PREVIEW): String {
+        directUrl?.let { return it }
         return "$baseUrl/api/assets/$id/thumbnail?size=${size.value}"
     }
     
@@ -68,6 +72,7 @@ data class Asset(
      * Get original image URL
      */
     fun getOriginalUrl(baseUrl: String): String {
+        directUrl?.let { return it }
         return "$baseUrl/api/assets/$id/original"
     }
     

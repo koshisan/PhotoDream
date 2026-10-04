@@ -10,11 +10,18 @@ data class DeviceConfig(
     val deviceId: String,
     
     val immich: ImmichConfig,
+    // Present when the profile's source is Flickr
+    val flickr: FlickrConfig? = null,
     val display: DisplayConfig,
     val profile: ProfileConfig,
     
     @SerializedName("webhook_url")
     val webhookUrl: String
+)
+
+data class FlickrConfig(
+    @SerializedName("api_key")
+    val apiKey: String
 )
 
 data class ImmichConfig(
@@ -241,8 +248,13 @@ data class ProfileConfig(
     val excludePaths: List<String> = emptyList(),
 
     @SerializedName("media_type")
-    val mediaType: String? = "image"
-)
+    val mediaType: String? = "image",
+
+    // "immich" (default) or "flickr"; for Flickr the search term is searchFilter.query
+    val source: String? = null
+) {
+    val isFlickr: Boolean get() = source == "flickr"
+}
 
 /**
  * Immich search filter - matches the Immich smart search API

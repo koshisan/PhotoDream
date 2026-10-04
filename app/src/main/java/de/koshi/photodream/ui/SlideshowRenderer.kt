@@ -402,14 +402,17 @@ DefaultLoadControl.Builder()
 
         // Choose quality based on display resolution
         // PREVIEW = 1440px, so use original for anything larger
-        val url = if (maxDimension > 1440) {
+        val url = if (asset.directUrl != null) {
+            asset.directUrl
+        } else if (maxDimension > 1440) {
             Log.d(TAG, "High-res display ($maxDimension px), loading original image")
             asset.getOriginalUrl(baseUrl)
         } else {
             asset.getThumbnailUrl(baseUrl, ThumbnailSize.PREVIEW)
         }
 
-        val glideUrl = GlideUrl(
+        // Public sources (Flickr) carry their own URL and must not get the Immich key
+        val glideUrl = if (asset.directUrl != null) GlideUrl(url) else GlideUrl(
             url,
             LazyHeaders.Builder()
                 .addHeader("x-api-key", apiKey)

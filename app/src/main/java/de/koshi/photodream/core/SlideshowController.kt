@@ -32,6 +32,7 @@ import de.koshi.photodream.util.Fonts
 import de.koshi.photodream.util.ImageBlur
 import de.koshi.photodream.util.MdiIcons
 import de.koshi.photodream.R
+import de.koshi.photodream.api.FlickrClient
 import de.koshi.photodream.api.ImmichClient
 import de.koshi.photodream.model.*
 import android.graphics.drawable.GradientDrawable
@@ -140,6 +141,7 @@ class SlideshowController(
     private var config: DeviceConfig? = null
     private var lastReceivedConfigJson: String? = null  // For debugging - raw JSON of last config push
     private var immichClient: ImmichClient? = null
+    private var flickrClient: FlickrClient? = null
     private var playlist: List<Asset> = emptyList()
     private var currentIndex = 0
     
@@ -782,7 +784,7 @@ class SlideshowController(
                 
                 config?.let { cfg ->
                     httpService?.updateConfig(cfg)
-                    immichClient = ImmichClient(cfg.immich)
+                    createClients(cfg)
                     setupClock(cfg.display)
                     // Pull any calendar events the HTTP service already has cached
                     // (covers the case where the service bound before config loaded).
@@ -1018,9 +1020,17 @@ class SlideshowController(
         }
     }
     
+    private fun createClients(cfg: DeviceConfig) {
+        // Blank base URL (e.g. a Flickr-only setup) would make Retrofit throw
+        immichClient = cfg.immich.baseUrl.takeIf { it.isNotBlank() }?.let { ImmichClient(cfg.immich) }
+        flickrClient = cfg.flickr?.apiKey?.takeIf { it.isNotBlank() }?.let {
+            val dm = context.resources.displayMetrics
+            FlickrClient(it, maxOf(dm.widthPixels, dm.heightPixels))
+        }
+    }
+
     private suspend fun loadPlaylist(profile: ProfileConfig, resetPage: Boolean = true) {
         withContext(Dispatchers.IO) {
-            val client = immichClient ?: return@withContext
             displayMode = config?.display?.mode ?: "smart_shuffle"
             
             // Reset page for new playlist loads (profile change, etc.)
@@ -1033,13 +1043,23 @@ class SlideshowController(
             // - sequential: fixed order from smart search (paginated)
             // - random: random selection each time  
             // - smart_shuffle: 50/50 mix of random + recent (last 30 days)
-            val (allAssets, hasMore) = client.loadPlaylist(
-                profile.searchFilter,
-                displayMode,
-                limit = 500,
-                page = currentPage,
-                mediaType = profile.mediaType ?: "image"
-            )
+            val (allAssets, hasMore) = if (profile.isFlickr) {
+                // Never fall back to Immich for a Flickr profile (SFW safety)
+                val client = flickrClient ?: run {
+                    Log.e(TAG, "Flickr profile but no Flickr API key in config")
+                    return@withContext
+                }
+                client.loadPlaylist(profile.searchFilter, displayMode, limit = 500, page = currentPage)
+            } else {
+                val client = immichClient ?: return@withContext
+                client.loadPlaylist(
+                    profile.searchFilter,
+                    displayMode,
+                    limit = 500,
+                    page = currentPage,
+                    mediaType = profile.mediaType ?: "image"
+                )
+            }
             hasMorePages = hasMore
             
             // Apply exclude paths filter
@@ -1115,7 +1135,7 @@ class SlideshowController(
     private fun startSlideshow() {
         if (playlist.isEmpty()) {
             Log.w(TAG, "No images found - showing placeholder message")
-            showError("No images found for current profile.\nPlease check your Immich filter settings.")
+            showError("No images found for current profile.\nPlease check the profile's filter / search term.")
             // Don't crash - just don't start the slideshow timer
             // The user can tap to exit or wait for new config
             reportStatusToHA()
@@ -1194,7 +1214,7 @@ class SlideshowController(
         
         // Show loading briefly, then fetch new details
         scope.launch {
-            val details = immichClient?.getAssetDetails(currentAsset.id)
+            val details = if (currentAsset.directUrl == null) immichClient?.getAssetDetails(currentAsset.id) else null
             handler.post {
                 infoPanel.removeAllViews()
                 populateInfoPanel(currentAsset, details)
@@ -1298,6 +1318,9 @@ class SlideshowController(
         // Compare profile by ID (unique) not just name (could be duplicate across Immich instances)
         val oldProfileId = config?.profile?.id
         val newProfileId = newConfig.profile.id
+        // Same id but edited content (e.g. a new Flickr search term) must reload too
+        val profileEdited = oldProfileId == newProfileId &&
+            (config?.profile != newConfig.profile || config?.flickr != newConfig.flickr)
         val oldPanSpeed = config?.display?.panSpeed
         val oldSkipAspect = config?.display?.skipWrongAspect
         
@@ -1312,13 +1335,14 @@ class SlideshowController(
         resetSlideshowTimer()
         
         val aspectToggled = oldSkipAspect != newConfig.display.skipWrongAspect
-        if (oldProfileId != newProfileId || aspectToggled) {
+        if (oldProfileId != newProfileId || profileEdited || aspectToggled) {
             val why = if (oldProfileId != newProfileId)
                 "profile changed from $oldProfileId to $newProfileId (${newConfig.profile.name})"
+            else if (profileEdited) "profile ${newConfig.profile.name} edited"
             else "skipWrongAspect toggled to ${newConfig.display.skipWrongAspect}"
             Log.i(TAG, "Reloading playlist: $why")
             scope.launch {
-                immichClient = ImmichClient(newConfig.immich)
+                createClients(newConfig)
                 loadPlaylist(newConfig.profile)
                 // Show new image immediately after loading playlist
                 if (playlist.isNotEmpty()) {
@@ -1336,7 +1360,7 @@ class SlideshowController(
         scope.launch {
             config = ConfigManager.loadConfig(context, forceRefresh = true)
             config?.let { cfg ->
-                immichClient = ImmichClient(cfg.immich)
+                createClients(cfg)
                 loadPlaylist(cfg.profile)
                 // Show new image immediately
                 if (playlist.isNotEmpty()) {
@@ -1490,7 +1514,7 @@ class SlideshowController(
         
         // Fetch details async
         scope.launch {
-            val details = immichClient?.getAssetDetails(currentAsset.id)
+            val details = if (currentAsset.directUrl == null) immichClient?.getAssetDetails(currentAsset.id) else null
             
             handler.post {
                 infoPanel.removeAllViews()
