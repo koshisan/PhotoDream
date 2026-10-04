@@ -142,7 +142,9 @@ class SlideshowController(
     private var lastReceivedConfigJson: String? = null  // For debugging - raw JSON of last config push
     private var immichClient: ImmichClient? = null
     private var flickrClient: FlickrClient? = null
-    private var playlist: List<Asset> = emptyList()
+    // Bumped per playlist load; a load that finishes after a newer one started is discarded
+    private val loadGeneration = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var playlist: List<Asset> = emptyList()
     private var currentIndex = 0
     
     // Pagination state (survives slideshow restarts, but not HTTP server restarts)
@@ -1030,6 +1032,7 @@ class SlideshowController(
     }
 
     private suspend fun loadPlaylist(profile: ProfileConfig, resetPage: Boolean = true) {
+        val generation = loadGeneration.incrementAndGet()
         withContext(Dispatchers.IO) {
             displayMode = config?.display?.mode ?: "smart_shuffle"
             
@@ -1086,6 +1089,13 @@ class SlideshowController(
                     kept
                 }
             } else filtered
+
+            // A slow load (e.g. Flickr) must not overwrite the playlist of a newer profile:
+            // last-writer-wins leaked Flickr images into Immich profiles and vice versa.
+            if (generation != loadGeneration.get() || profile != config?.profile) {
+                Log.w(TAG, "Discarding stale playlist for '${profile.name}' (superseded)")
+                return@withContext
+            }
 
             // For sequential mode, keep order as-is. For others, already randomized by API
             playlist = aspectFiltered
@@ -1154,6 +1164,19 @@ class SlideshowController(
         val asset = playlist[currentIndex]
         val cfg = config ?: return
         val intervalMs = cfg.display.intervalSeconds * 1000L
+
+        // Last line of defence (SFW): never show an asset from a different source than the
+        // active profile's. Drop the playlist and reload for the current profile instead.
+        if (cfg.profile.isFlickr != (asset.directUrl != null)) {
+            Log.e(TAG, "Asset ${asset.id} does not belong to profile '${cfg.profile.name}' - reloading")
+            playlist = emptyList()
+            currentIndex = 0
+            scope.launch {
+                loadPlaylist(cfg.profile)
+                if (playlist.isNotEmpty()) handler.post { showCurrentImage(withTransition = true) }
+            }
+            return
+        }
 
         // Reset full-video tracking for the newly shown asset.
         videoFirstPlayDone = false
