@@ -876,6 +876,8 @@ class HttpServerService : Service() {
                 "device_id" to currentConfig?.deviceId,
                 "profile" to currentConfig?.profile?.name,
                 "display_mode" to info?.displayMode,
+                // Gallery links each thumbnail to the Immich web UI (/photos/<id>)
+                "immich_base_url" to currentConfig?.immich?.baseUrl?.trimEnd('/'),
                 "skip_wrong_aspect" to currentConfig?.display?.skipWrongAspect,
                 "current_index" to info?.currentIndex,
                 "total_images" to items.size,
