@@ -41,6 +41,11 @@ data class Asset(
     @SerializedName("exifInfo")
     val exifInfo: ExifInfo? = null,
 
+    // Displayed dimensions (Immich 2.x, already orientation-corrected). Unlike exifInfo these
+    // are always present in search results, so they drive the aspect-ratio filter.
+    val width: Int? = null,
+    val height: Int? = null,
+
     // Public image URL for non-Immich sources (Flickr); loaded without Immich auth
     val directUrl: String? = null
 ) {
@@ -50,6 +55,9 @@ data class Asset(
      * swaps the effective width and height.
      */
     fun displayAspectRatio(): Float? {
+        if (width != null && height != null && width > 0 && height > 0) {
+            return width.toFloat() / height.toFloat()
+        }
         val w = exifInfo?.exifImageWidth ?: return null
         val h = exifInfo?.exifImageHeight ?: return null
         if (w <= 0 || h <= 0) return null
@@ -178,6 +186,46 @@ data class ExifInfo(
     val exifImageHeight: Int? = null,   // original pixel height
 
     val orientation: String? = null     // EXIF orientation 1..8; 5..8 mean 90/270 rotation
+)
+
+/**
+ * Metadata search / search statistics request body. Used to draw uniformly random assets by
+ * offset (page = offset + 1, size = 1), since /api/search/random is heavily biased.
+ * page/size are omitted for /api/search/statistics.
+ */
+data class MetadataSearchRequest(
+    val page: Int? = null,
+    val size: Int? = null,
+    val type: String? = null,
+
+    @SerializedName("personIds")
+    val personIds: List<String>? = null,
+
+    @SerializedName("tagIds")
+    val tagIds: List<String>? = null,
+
+    @SerializedName("albumIds")
+    val albumIds: List<String>? = null,
+
+    val city: String? = null,
+    val country: String? = null,
+    val state: String? = null,
+
+    @SerializedName("takenAfter")
+    val takenAfter: String? = null,
+
+    @SerializedName("takenBefore")
+    val takenBefore: String? = null,
+
+    @SerializedName("isArchived")
+    val isArchived: Boolean? = null,
+
+    @SerializedName("isFavorite")
+    val isFavorite: Boolean? = null
+)
+
+data class SearchStatisticsResponse(
+    val total: Int
 )
 
 /**

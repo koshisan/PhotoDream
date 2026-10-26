@@ -4,6 +4,7 @@ import android.util.Log
 import de.koshi.photodream.model.Asset
 import de.koshi.photodream.model.AssetDetails
 import de.koshi.photodream.model.ImmichConfig
+import de.koshi.photodream.model.MetadataSearchRequest
 import de.koshi.photodream.model.RandomSearchRequest
 import de.koshi.photodream.model.SearchFilter
 import de.koshi.photodream.model.SmartSearchRequest
@@ -12,6 +13,11 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
@@ -29,6 +35,10 @@ class ImmichClient(private val config: ImmichConfig) {
     companion object {
         private const val TAG = "ImmichClient"
         private const val RECENT_DAYS = 30
+        // Parallel single-asset requests while sampling uniformly
+        private const val SAMPLE_CONCURRENCY = 8
+        // Immich's max page size for metadata search
+        private const val MAX_PAGE_SIZE = 1000
     }
     
     private val api: ImmichApi
@@ -231,9 +241,85 @@ class ImmichClient(private val config: ImmichConfig) {
     }
     
     /**
-     * Search using /api/search/random (random each time)
+     * Random selection of [count] assets matching the filter.
+     *
+     * /api/search/random is NOT uniform: Immich picks a random UUID pivot and samples from the
+     * assets with id < pivot, so low-id assets show up in almost every batch (measured: ~29% of
+     * draws start with '0', ~0.2% with 'f'). That is why the same "old" photos kept recurring.
+     * We therefore draw random offsets into /api/search/metadata instead, falling back to the
+     * random endpoint if that fails (e.g. older Immich without /api/search/statistics).
      */
     private suspend fun searchWithRandomApi(filter: SearchFilter?, count: Int, apiType: String? = "IMAGE"): List<Asset> {
+        val sampled = try {
+            sampleUniform(filter, count, apiType)
+        } catch (e: Exception) {
+            Log.w(TAG, "Uniform sampling failed (${e.message}), falling back to /api/search/random")
+            null
+        }
+        if (!sampled.isNullOrEmpty()) return sampled
+        return searchWithRandomEndpoint(filter, count, apiType)
+    }
+
+    /**
+     * Uniformly random sample: count matches via /api/search/statistics, then fetch
+     * distinct random offsets one asset at a time (page = offset + 1, size = 1).
+     * Returns null if the server returned nothing usable.
+     */
+    private suspend fun sampleUniform(filter: SearchFilter?, count: Int, apiType: String?): List<Asset>? {
+        val base = MetadataSearchRequest(
+            type = apiType ?: filter?.type,
+            personIds = filter?.personIds,
+            tagIds = filter?.tagIds,
+            albumIds = filter?.albumId?.let { listOf(it) },
+            city = filter?.city,
+            country = filter?.country,
+            state = filter?.state,
+            takenAfter = filter?.takenAfter,
+            takenBefore = filter?.takenBefore,
+            isArchived = filter?.isArchived,
+            isFavorite = filter?.isFavorite
+        )
+        val total = api.searchStatistics(base).total
+        if (total <= 0) return emptyList()
+
+        // Small pool: just take all of it
+        if (total <= count) {
+            val all = mutableListOf<Asset>()
+            var page = 1
+            while (all.size < total) {
+                val items = api.metadataSearch(base.copy(page = page++, size = MAX_PAGE_SIZE)).assets.items
+                if (items.isEmpty()) break
+                all += items
+            }
+            Log.i(TAG, "Uniform sample: pool of $total <= $count, took all ${all.size}")
+            return all.shuffled().takeIf { it.isNotEmpty() }
+        }
+
+        val offsets = mutableSetOf<Int>()
+        while (offsets.size < count) offsets += kotlin.random.Random.nextInt(total)
+
+        val semaphore = Semaphore(SAMPLE_CONCURRENCY)
+        val assets = coroutineScope {
+            offsets.map { offset ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            api.metadataSearch(base.copy(page = offset + 1, size = 1)).assets.items.firstOrNull()
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }
+            }.awaitAll().filterNotNull().distinctBy { it.id }
+        }
+        Log.i(TAG, "Uniform sample: requested $count of $total, got ${assets.size}, sample=${assets.take(5).map { it.id.take(8) }}")
+        return assets.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Search using /api/search/random (biased, see searchWithRandomApi; fallback only)
+     */
+    private suspend fun searchWithRandomEndpoint(filter: SearchFilter?, count: Int, apiType: String? = "IMAGE"): List<Asset> {
         return try {
             val request = RandomSearchRequest(
                 size = count,

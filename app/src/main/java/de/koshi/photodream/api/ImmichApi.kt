@@ -2,8 +2,10 @@ package de.koshi.photodream.api
 
 import de.koshi.photodream.model.Asset
 import de.koshi.photodream.model.AssetDetails
+import de.koshi.photodream.model.MetadataSearchRequest
 import de.koshi.photodream.model.RandomSearchRequest
 import de.koshi.photodream.model.SearchResponse
+import de.koshi.photodream.model.SearchStatisticsResponse
 import de.koshi.photodream.model.SmartSearchRequest
 import retrofit2.http.*
 
@@ -30,6 +32,23 @@ interface ImmichApi {
         @Body request: RandomSearchRequest
     ): List<Asset>
     
+    /**
+     * Metadata search (date-ordered, offset-paginated). With size=1 the page is an exact
+     * offset, which is how we draw uniformly random assets.
+     */
+    @POST("api/search/metadata")
+    suspend fun metadataSearch(
+        @Body request: MetadataSearchRequest
+    ): SearchResponse
+
+    /**
+     * Number of assets matching the filters
+     */
+    @POST("api/search/statistics")
+    suspend fun searchStatistics(
+        @Body request: MetadataSearchRequest
+    ): SearchStatisticsResponse
+
     /**
      * Get random assets (deprecated - use randomSearch instead)
      */
