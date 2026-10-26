@@ -38,6 +38,8 @@ object SlideshowBridge {
         /** Queried synchronously from the HTTP thread for /status and /health. */
         fun status(): DeviceStatus
         fun playlistInfo(): HttpServerService.PlaylistInfo?
+        /** Full current playlist (for /playlist and /gallery). */
+        fun playlistItems(): List<HttpServerService.ImageInfo>
     }
 
     @Volatile

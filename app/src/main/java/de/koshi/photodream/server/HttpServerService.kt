@@ -52,11 +52,15 @@ import de.koshi.photodream.util.ConfigManager
  * - POST /set-profile - Changes active profile
  * - POST /calendar - Receive aggregated calendar events from HA
  * - POST /notify - Show a notification overlay (with optional tap callback)
+ * - GET /playlist - Full current playlist as JSON
+ * - GET /gallery - Browser page showing the whole playlist as thumbnails
+ * - GET /thumb?id=<assetId> - Immich thumbnail proxy (the browser has no API key)
  */
 class HttpServerService : Service() {
     
     companion object {
         private const val TAG = "HttpServerService"
+        private val THUMB_ID_REGEX = Regex("^[0-9a-fA-F-]{36}$")
         const val DEFAULT_PORT = 8080
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "photodream_server"
@@ -88,6 +92,9 @@ class HttpServerService : Service() {
     private var server: PhotoDreamServer? = null
     private val binder = LocalBinder()
     private val gson = Gson()
+
+    // Shared client for /thumb (a gallery page fires hundreds of requests)
+    private val thumbHttpClient by lazy { okhttp3.OkHttpClient() }
     private var serverPort = DEFAULT_PORT
     private val mainHandler = Handler(Looper.getMainLooper())
     
@@ -206,7 +213,12 @@ class HttpServerService : Service() {
         val id: String,
         val thumbnailUrl: String?,
         val originalPath: String?,
-        val createdAt: String?
+        val createdAt: String?,
+        val type: String? = null,
+        val width: Int? = null,
+        val height: Int? = null,
+        // Public URL for non-Immich sources (Flickr); null means "proxy via /thumb"
+        val directUrl: String? = null
     )
     
     fun updateStatus(status: DeviceStatus) {
@@ -417,6 +429,9 @@ class HttpServerService : Service() {
                     method == Method.GET && uri == "/status" -> handleStatus()
                     method == Method.GET && uri == "/health" -> handleHealth()
                     method == Method.GET && uri == "/current-image" -> handleCurrentImage()
+                    method == Method.GET && uri == "/playlist" -> handlePlaylist()
+                    method == Method.GET && uri == "/gallery" -> handleGallery()
+                    method == Method.GET && uri == "/thumb" -> handleThumb(session)
                     method == Method.POST && uri == "/configure" -> handleConfigure(session)
                     method == Method.POST && uri == "/refresh-config" -> handleRefreshConfig()
                     method == Method.POST && uri == "/next" -> handleNext()
@@ -818,6 +833,68 @@ class HttpServerService : Service() {
             }
         }
         
+        private fun handlePlaylist(): Response {
+            val commands = SlideshowBridge.commands()
+            val info = commands?.playlistInfo()
+            val items = commands?.playlistItems().orEmpty()
+            return jsonResponse(mapOf(
+                "device_id" to currentConfig?.deviceId,
+                "profile" to currentConfig?.profile?.name,
+                "display_mode" to info?.displayMode,
+                "skip_wrong_aspect" to currentConfig?.display?.skipWrongAspect,
+                "current_index" to info?.currentIndex,
+                "total_images" to items.size,
+                "items" to items.mapIndexed { i, img -> mapOf(
+                    "index" to i,
+                    "id" to img.id,
+                    "type" to img.type,
+                    "original_path" to img.originalPath,
+                    "created_at" to img.createdAt,
+                    "width" to img.width,
+                    "height" to img.height,
+                    "direct_url" to img.directUrl
+                )}
+            ))
+        }
+
+        private fun handleGallery(): Response {
+            val html = assets.open("gallery.html").bufferedReader().use { it.readText() }
+            return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
+        }
+
+        private fun handleThumb(session: IHTTPSession): Response {
+            val id = session.parameters["id"]?.firstOrNull()
+            // Only a bare asset UUID may reach the Immich URL
+            if (id == null || !THUMB_ID_REGEX.matches(id)) {
+                return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid id")
+            }
+            val base = currentConfig?.immich?.baseUrl?.trimEnd('/')
+            val apiKey = currentConfig?.immich?.apiKey
+            if (base.isNullOrBlank() || apiKey.isNullOrBlank()) {
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "No Immich config")
+            }
+            val request = okhttp3.Request.Builder()
+                .url("$base/api/assets/$id/thumbnail?size=thumbnail")
+                .addHeader("x-api-key", apiKey)
+                .build()
+            thumbHttpClient.newCall(request).execute().use { response ->
+                val bytes = response.body?.bytes()
+                if (!response.isSuccessful || bytes == null) {
+                    return newFixedLengthResponse(
+                        Response.Status.lookup(response.code) ?: Response.Status.INTERNAL_ERROR,
+                        MIME_PLAINTEXT,
+                        "Immich returned: ${response.code}"
+                    )
+                }
+                return newFixedLengthResponse(
+                    Response.Status.OK,
+                    response.header("Content-Type", "image/jpeg"),
+                    java.io.ByteArrayInputStream(bytes),
+                    bytes.size.toLong()
+                ).apply { addHeader("Cache-Control", "max-age=86400") }
+            }
+        }
+
         // ========== Brightness Control Handlers ==========
         
         private fun handleGetBrightness(): Response {

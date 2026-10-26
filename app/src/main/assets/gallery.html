@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhotoDream Playlist</title>
+<style>
+  :root { --bg:#111; --fg:#eee; --muted:#888; --card:#1c1c1c; --accent:#4fc3f7; --hot:#ff7043; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:#111e; backdrop-filter:blur(6px);
+           padding:10px 16px; border-bottom:1px solid #333; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .meta { color:var(--muted); }
+  .meta b { color:var(--fg); font-weight:600; }
+  button { background:#333; color:var(--fg); border:1px solid #555; border-radius:4px; padding:3px 10px; cursor:pointer; }
+  details { margin-top:6px; }
+  summary { cursor:pointer; color:var(--muted); }
+  table { border-collapse:collapse; margin-top:4px; }
+  td { padding:1px 8px 1px 0; vertical-align:top; }
+  td.n { text-align:right; color:var(--hot); font-weight:600; }
+  tr.folder { cursor:pointer; }
+  tr.folder:hover td, tr.folder.sel td { color:var(--accent); }
+  main { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; padding:12px 16px; }
+  .tile { position:relative; background:var(--card); border-radius:4px; overflow:hidden; aspect-ratio:1; }
+  .tile img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tile .cap { position:absolute; left:0; right:0; bottom:0; padding:2px 5px; font-size:11px;
+               background:linear-gradient(transparent, #000c); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .idx { position:absolute; top:3px; left:4px; font-size:11px; background:#000a; padding:0 4px; border-radius:3px; }
+  .tile .vid { position:absolute; top:3px; right:4px; font-size:11px; background:#000a; padding:0 4px; border-radius:3px; }
+  .tile.past { opacity:.4; }
+  .tile.current { outline:3px solid var(--accent); outline-offset:-3px; opacity:1; }
+  .tile.dup .cap { color:var(--hot); }
+  main.filtering .tile:not(.match) { display:none; }
+  .empty { padding:40px 16px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">PhotoDream Playlist</h1>
+  <div class="meta" id="meta">Lade…</div>
+  <details id="folders-box"><summary id="folders-sum">Ordner</summary><table id="folders"></table></details>
+</header>
+<main id="grid"></main>
+<script>
+function dirOf(p) { if (!p) return ''; var i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : p; }
+function shortDir(d) { var parts = d.split('/').filter(Boolean); return parts.slice(-2).join('/'); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+var selected = null;
+
+function render(data) {
+  var items = data.items || [];
+  var cur = data.current_index == null ? -1 : data.current_index;
+  document.title = 'Playlist ' + (data.device_id || '');
+  document.getElementById('title').textContent = 'Playlist · ' + (data.device_id || '?') + ' · ' + (data.profile || '');
+
+  var counts = {}, portrait = 0, landscape = 0, unknown = 0, videos = 0;
+  items.forEach(function (it) {
+    var d = dirOf(it.original_path); counts[d] = (counts[d] || 0) + 1;
+    if (it.type === 'VIDEO') videos++;
+    if (!it.width || !it.height) unknown++; else if (it.height > it.width) portrait++; else landscape++;
+  });
+  var dirs = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+  var dupDirs = dirs.filter(function (d) { return counts[d] >= 3; });
+
+  document.getElementById('meta').innerHTML =
+    'Position <b>' + (cur + 1) + '/' + items.length + '</b> · Modus <b>' + esc(data.display_mode) + '</b>' +
+    ' · skip_wrong_aspect <b>' + esc(data.skip_wrong_aspect) + '</b>' +
+    ' · Hoch <b>' + portrait + '</b> / Quer <b>' + landscape + '</b>' + (unknown ? ' / ? <b>' + unknown + '</b>' : '') +
+    ' · Videos <b>' + videos + '</b>' +
+    ' · Ordner <b>' + dirs.length + '</b> (≥3×: <b>' + dupDirs.length + '</b>)' +
+    ' &nbsp;<button onclick="load()">Neu laden</button>';
+
+  document.getElementById('folders-sum').textContent = 'Ordner nach Häufigkeit (klicken zum Filtern)';
+  document.getElementById('folders').innerHTML = dirs.filter(function (d) { return counts[d] >= 2; }).map(function (d) {
+    return '<tr class="folder" data-dir="' + esc(d) + '"><td class="n">' + counts[d] + '×</td><td>' + esc(d) + '</td></tr>';
+  }).join('') || '<tr><td>Kein Ordner kommt mehrfach vor.</td></tr>';
+  Array.prototype.forEach.call(document.querySelectorAll('tr.folder'), function (tr) {
+    tr.onclick = function () { selectDir(selected === tr.dataset.dir ? null : tr.dataset.dir); };
+  });
+
+  var grid = document.getElementById('grid');
+  if (!items.length) { grid.innerHTML = '<div class="empty">Keine Playlist (Slideshow läuft nicht?)</div>'; return; }
+  grid.innerHTML = items.map(function (it) {
+    var d = dirOf(it.original_path);
+    var src = it.direct_url || ('/thumb?id=' + encodeURIComponent(it.id));
+    var cls = 'tile' + (it.index < cur ? ' past' : '') + (it.index === cur ? ' current' : '') + (counts[d] >= 3 ? ' dup' : '');
+    var dims = it.width && it.height ? it.width + '×' + it.height : '?';
+    return '<div class="' + cls + '" data-dir="' + esc(d) + '" title="' + esc(it.original_path) + '\n' + esc(it.created_at) + '\n' + dims + '">' +
+      '<img loading="lazy" src="' + esc(src) + '" alt="">' +
+      '<span class="idx">' + (it.index + 1) + '</span>' +
+      (it.type === 'VIDEO' ? '<span class="vid">▶</span>' : '') +
+      '<div class="cap">' + (counts[d] > 1 ? counts[d] + '× ' : '') + esc(shortDir(d)) + '</div></div>';
+  }).join('');
+  selectDir(selected);
+  var c = grid.querySelector('.current');
+  if (c && !selected) c.scrollIntoView({ block: 'center' });
+}
+
+function selectDir(dir) {
+  selected = dir;
+  var grid = document.getElementById('grid');
+  grid.classList.toggle('filtering', !!dir);
+  Array.prototype.forEach.call(grid.children, function (t) { t.classList.toggle('match', !!dir && t.dataset.dir === dir); });
+  Array.prototype.forEach.call(document.querySelectorAll('tr.folder'), function (tr) { tr.classList.toggle('sel', tr.dataset.dir === dir); });
+}
+
+function load() {
+  fetch('/playlist').then(function (r) { return r.json(); }).then(render).catch(function (e) {
+    document.getElementById('meta').textContent = 'Fehler: ' + e;
+  });
+}
+load();
+</script>
+</body>
+</html>

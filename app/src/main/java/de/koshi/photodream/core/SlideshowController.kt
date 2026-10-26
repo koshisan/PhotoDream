@@ -271,6 +271,7 @@ class SlideshowController(
         override fun onUpdateAvailable(info: HttpServerService.UpdateInfo) = showUpdateAvailable(info)
         override fun status(): DeviceStatus = getCurrentStatus()
         override fun playlistInfo(): HttpServerService.PlaylistInfo? = getPlaylistInfoInternal()
+        override fun playlistItems(): List<HttpServerService.ImageInfo> = getPlaylistItemsInternal()
     }
 
     private val serviceConnection = object : ServiceConnection {
@@ -1468,6 +1469,22 @@ class SlideshowController(
         )
     }
     
+    private fun getPlaylistItemsInternal(): List<HttpServerService.ImageInfo> {
+        val baseUrl = config?.immich?.baseUrl ?: ""
+        return playlist.map {
+            HttpServerService.ImageInfo(
+                id = it.id,
+                thumbnailUrl = it.getThumbnailUrl(baseUrl),
+                originalPath = it.originalPath,
+                createdAt = it.fileCreatedAt,
+                type = it.type,
+                width = it.width ?: it.exifInfo?.exifImageWidth,
+                height = it.height ?: it.exifInfo?.exifImageHeight,
+                directUrl = it.directUrl
+            )
+        }
+    }
+
     private fun showUpdateAvailable(updateInfo: HttpServerService.UpdateInfo) {
         pendingUpdateInfo = updateInfo
         handler.post {
