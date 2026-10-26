@@ -169,27 +169,41 @@ class MainActivity : AppCompatActivity() {
             requestBrightnessPermissions()
         }
 
-        // Device admin for "hard" screen-off from HA
+        // Screen off/on from HA needs two grants: device admin (off) + "Turn screen on" (on)
         updateScreenAdminButton()
         btnScreenAdmin.setOnClickListener {
-            if (ScreenManager.isHardOffAvailable(this)) {
-                (getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager)
-                    .removeActiveAdmin(ScreenManager.adminComponent(this))
-                btnScreenAdmin.postDelayed({ updateScreenAdminButton() }, 500)
-            } else {
-                startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ScreenManager.adminComponent(this@MainActivity))
-                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, getString(R.string.device_admin_description))
-                })
+            when {
+                !ScreenManager.canTurnOff(this) -> startActivity(
+                    Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                        putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ScreenManager.adminComponent(this@MainActivity))
+                        putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, getString(R.string.device_admin_description))
+                    }
+                )
+                !ScreenManager.canTurnOn(this) -> {
+                    // No public intent for this special access page - open the app info instead
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:$packageName")
+                    })
+                    Toast.makeText(
+                        this,
+                        "Allow: Settings → Apps → Special app access → Turn screen on → PhotoDream",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                else -> {
+                    (getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager)
+                        .removeActiveAdmin(ScreenManager.adminComponent(this))
+                    btnScreenAdmin.postDelayed({ updateScreenAdminButton() }, 500)
+                }
             }
         }
     }
 
     private fun updateScreenAdminButton() {
-        btnScreenAdmin.text = if (ScreenManager.isHardOffAvailable(this)) {
-            "Hard Screen-Off: Enabled (tap to disable)"
-        } else {
-            "Hard Screen-Off: Disabled (tap to enable)"
+        btnScreenAdmin.text = when {
+            !ScreenManager.canTurnOff(this) -> "Screen Off from HA: Disabled (tap to allow)"
+            !ScreenManager.canTurnOn(this) -> "Screen Off from HA: 'Turn screen on' missing (tap)"
+            else -> "Screen Off from HA: Enabled (tap to disable)"
         }
     }
     

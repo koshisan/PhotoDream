@@ -58,20 +58,10 @@ class BrightnessOverlayService : Service() {
          * Check if service is running
          */
         fun isRunning(): Boolean = instance != null
-
-        // Screen "soft off": overlay catches touches so a tap turns the screen back on
-        @Volatile
-        private var tapToWake = false
-
-        fun setTapToWake(enabled: Boolean) {
-            tapToWake = enabled
-            instance?.applyTouchMode()
-        }
     }
     
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
-    private var overlayParams: WindowManager.LayoutParams? = null
     private var currentAlpha: Float = 0f
     
     override fun onCreate() {
@@ -87,12 +77,6 @@ class BrightnessOverlayService : Service() {
         BrightnessManager.onOverlayAlphaChanged = { alpha ->
             updateOverlayAlpha(alpha)
         }
-
-        // A dim level set before this service was up (e.g. screen soft-off right after
-        // starting the service) had no callback to reach - apply it now.
-        val brightness = BrightnessManager.getBrightness()
-        if (brightness < 0) updateOverlayAlpha(-brightness / 100f)
-        applyTouchMode()
     }
     
     override fun onDestroy() {
@@ -143,7 +127,6 @@ class BrightnessOverlayService : Service() {
             format = PixelFormat.TRANSLUCENT
         }
         
-        overlayParams = params
         try {
             windowManager?.addView(overlayView, params)
             Log.i(TAG, "Overlay created")
@@ -165,28 +148,6 @@ class BrightnessOverlayService : Service() {
         overlayView = null
     }
     
-    /** Toggle between pass-through (dimming) and tap-to-wake (screen soft-off). */
-    @android.annotation.SuppressLint("ClickableViewAccessibility")
-    private fun applyTouchMode() {
-        val view = overlayView ?: return
-        val params = overlayParams ?: return
-        val wake = tapToWake
-        params.flags = if (wake) {
-            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
-            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        view.setOnTouchListener(if (wake) View.OnTouchListener { _, event ->
-            if (event.action == android.view.MotionEvent.ACTION_UP) ScreenManager.screenOn(this)
-            true
-        } else null)
-        try {
-            windowManager?.updateViewLayout(view, params)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to update overlay touch mode: ${e.message}", e)
-        }
-    }
-
     /**
      * Update overlay transparency
      * 

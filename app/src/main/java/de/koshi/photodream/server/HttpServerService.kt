@@ -58,7 +58,7 @@ import de.koshi.photodream.util.ConfigManager
  * - GET /playlist - Full current playlist as JSON
  * - GET /gallery - Browser page showing the whole playlist as thumbnails
  * - GET /thumb?id=<assetId> - Immich thumbnail proxy (the browser has no API key)
- * - GET/POST /screen - Screen on/off ({"on": false, "mode": "soft"|"hard"})
+ * - GET/POST /screen - Screen on/off ({"on": false}); device stays reachable while off
  */
 class HttpServerService : Service() {
     
@@ -1018,9 +1018,9 @@ class HttpServerService : Service() {
 
         private fun screenState(): Map<String, Any?> = mapOf(
             "screen_on" to ScreenManager.isScreenOn(),
-            "mode" to ScreenManager.offMode,
-            "hard_off_available" to ScreenManager.isHardOffAvailable(this@HttpServerService),
-            "overlay_permission" to Settings.canDrawOverlays(this@HttpServerService)
+            // Device admin (lockNow) and "Turn screen on" access (Android 14+); both needed
+            "can_turn_off" to ScreenManager.canTurnOff(this@HttpServerService),
+            "can_turn_on" to ScreenManager.canTurnOn(this@HttpServerService)
         )
 
         private fun handleSetScreen(session: IHTTPSession): Response {
@@ -1030,7 +1030,6 @@ class HttpServerService : Service() {
             val postData = body["postData"] ?: "{}"
             val request = gson.fromJson(postData, Map::class.java)
             val on = request["on"] as? Boolean
-            val mode = (request["mode"] as? String) ?: ScreenManager.MODE_SOFT
 
             if (on == null) {
                 return newFixedLengthResponse(
@@ -1040,21 +1039,25 @@ class HttpServerService : Service() {
                 )
             }
 
-            // Wake locks, WindowManager and lockNow() all want the main thread; wait for it
-            // so the response carries the effective mode (hard falls back to soft).
+            // Wake locks and lockNow() run on the main thread; wait for it so the response
+            // carries the outcome (off is refused without the needed permissions).
+            var error: String? = null
             val done = java.util.concurrent.CountDownLatch(1)
             mainHandler.post {
                 try {
                     if (on) ScreenManager.screenOn(this@HttpServerService)
-                    else ScreenManager.screenOff(this@HttpServerService, mode)
+                    else error = ScreenManager.screenOff(this@HttpServerService)
                 } catch (e: Exception) {
                     Log.e(TAG, "Screen ${if (on) "on" else "off"} failed: ${e.message}", e)
+                    error = e.message ?: e.javaClass.simpleName
                 } finally {
                     done.countDown()
                 }
             }
             done.await(3, java.util.concurrent.TimeUnit.SECONDS)
 
+            // (captured var -> no smart cast, hence let)
+            error?.let { return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, it) }
             return jsonResponse(mapOf<String, Any?>("success" to (ScreenManager.isScreenOn() == on)) + screenState())
         }
 

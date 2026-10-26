@@ -34,8 +34,6 @@ object SlideshowBridge {
         fun onCalendar(events: List<CalendarEvent>)
         fun onMedia(media: MediaState)
         fun onUpdateAvailable(info: HttpServerService.UpdateInfo)
-        /** Screen on/off changed (ScreenManager): cover / uncover the slideshow. */
-        fun onScreenPower() {}
 
         /** Queried synchronously from the HTTP thread for /status and /health. */
         fun status(): DeviceStatus

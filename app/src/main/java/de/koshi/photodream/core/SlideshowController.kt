@@ -241,7 +241,7 @@ class SlideshowController(
     private val slideshowRunnable = object : Runnable {
         override fun run() {
             ensureOwnership()   // self-heal from the timer proven to keep running
-            // Screen soft-off: keep the current image, don't load new ones in the dark
+            // Screen off from HA: don't load new images in the dark
             if (ScreenManager.isOff) {
                 handler.postDelayed(this, (config?.display?.intervalSeconds ?: 30) * 1000L)
                 return
@@ -275,7 +275,6 @@ class SlideshowController(
         override fun onCalendar(events: List<CalendarEvent>) = applyCalendar(events)
         override fun onMedia(media: MediaState) = applyMedia(media)
         override fun onUpdateAvailable(info: HttpServerService.UpdateInfo) = showUpdateAvailable(info)
-        override fun onScreenPower() = applyScreenPower()
         override fun status(): DeviceStatus = getCurrentStatus()
         override fun playlistInfo(): HttpServerService.PlaylistInfo? = getPlaylistInfoInternal()
         override fun playlistItems(): List<HttpServerService.ImageInfo> = getPlaylistItemsInternal()
@@ -313,7 +312,6 @@ class SlideshowController(
     fun start() {
         gestureDetector = GestureDetector(context, gestureListener)
         setupUI()
-        applyScreenPower()   // started while the screen is soft-off -> stay dark
         // Become the (preferred) notification renderer; any active notifications carry over.
         NotificationCenter.init(context)
         NotificationCenter.attachSlideshow(notificationStack, ownerAlive)
@@ -395,35 +393,9 @@ class SlideshowController(
      * Handle touch events. Call this from dispatchTouchEvent.
      */
     fun onTouchEvent(event: MotionEvent): Boolean {
-        // Screen off from HA: a tap only turns it back on
-        if (ScreenManager.isOff) {
-            if (event.action == MotionEvent.ACTION_UP) ScreenManager.screenOn(context)
-            return true
-        }
         return gestureDetector.onTouchEvent(event)
     }
 
-    // Black curtain for screen soft-off. Backs up the overlay window, which is missing without
-    // the overlay permission and may sit below the dream window on older Android versions.
-    private var screenCurtain: View? = null
-
-    private fun applyScreenPower() {
-        val dark = ScreenManager.isOff && ScreenManager.offMode == ScreenManager.MODE_SOFT
-        if (dark && screenCurtain == null) {
-            screenCurtain = View(context).apply {
-                setBackgroundColor(Color.BLACK)
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            }
-            container.addView(screenCurtain)
-        } else if (!dark) {
-            screenCurtain?.let { container.removeView(it) }
-            screenCurtain = null
-        }
-    }
-    
     private fun setupUI() {
         container.setBackgroundColor(Color.BLACK)
         

@@ -2,5 +2,5 @@
     <string name="app_name">PhotoDream</string>
     <string name="slideshow_app_name">PhotoDream Slideshow</string>
     <string name="accessibility_service_description">Captures keyboard key presses and sends them to Home Assistant. Used for remote control and automation triggers.</string>
-    <string name="device_admin_description">Lets Home Assistant turn the screen off completely (hard screen off). PhotoDream only uses this to lock the screen.</string>
+    <string name="device_admin_description">Lets Home Assistant turn the screen off. PhotoDream only uses this to lock the screen.</string>
 </resources>
