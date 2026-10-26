@@ -1,6 +1,7 @@
 package de.koshi.photodream
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -19,6 +20,7 @@ import de.koshi.photodream.server.HttpServerService
 import de.koshi.photodream.util.BrightnessManager
 import de.koshi.photodream.util.BrightnessOverlayService
 import de.koshi.photodream.util.ConfigManager
+import de.koshi.photodream.util.ScreenManager
 import kotlinx.coroutines.*
 
 /**
@@ -46,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtBrightnessValue: TextView
     private lateinit var btnAutoBrightness: MaterialButton
     private lateinit var txtBrightnessPermission: TextView
+    private lateinit var btnScreenAdmin: MaterialButton
     
     // Key capture views
     private lateinit var cardKeyCapture: MaterialCardView
@@ -80,6 +83,7 @@ class MainActivity : AppCompatActivity() {
         txtBrightnessValue = findViewById(R.id.txtBrightnessValue)
         btnAutoBrightness = findViewById(R.id.btnAutoBrightness)
         txtBrightnessPermission = findViewById(R.id.txtBrightnessPermission)
+        btnScreenAdmin = findViewById(R.id.btnScreenAdmin)
         
         // Find key capture views
         cardKeyCapture = findViewById(R.id.cardKeyCapture)
@@ -164,6 +168,29 @@ class MainActivity : AppCompatActivity() {
         txtBrightnessPermission.setOnClickListener {
             requestBrightnessPermissions()
         }
+
+        // Device admin for "hard" screen-off from HA
+        updateScreenAdminButton()
+        btnScreenAdmin.setOnClickListener {
+            if (ScreenManager.isHardOffAvailable(this)) {
+                (getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager)
+                    .removeActiveAdmin(ScreenManager.adminComponent(this))
+                btnScreenAdmin.postDelayed({ updateScreenAdminButton() }, 500)
+            } else {
+                startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ScreenManager.adminComponent(this@MainActivity))
+                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, getString(R.string.device_admin_description))
+                })
+            }
+        }
+    }
+
+    private fun updateScreenAdminButton() {
+        btnScreenAdmin.text = if (ScreenManager.isHardOffAvailable(this)) {
+            "Hard Screen-Off: Enabled (tap to disable)"
+        } else {
+            "Hard Screen-Off: Disabled (tap to enable)"
+        }
     }
     
     private fun checkBrightnessPermissions() {
@@ -188,6 +215,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateBrightnessPermissionUI() {
         checkBrightnessPermissions()
         updateAutoBrightnessButton()
+        updateScreenAdminButton()
     }
     
     private fun requestBrightnessPermissions() {

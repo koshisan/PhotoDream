@@ -19,6 +19,8 @@ import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import de.koshi.photodream.BuildConfig
 import de.koshi.photodream.MainActivity
 import de.koshi.photodream.R
@@ -34,6 +36,7 @@ import de.koshi.photodream.model.NotificationPayload
 import android.provider.Settings
 import de.koshi.photodream.util.BrightnessManager
 import de.koshi.photodream.util.BrightnessOverlayService
+import de.koshi.photodream.util.ScreenManager
 import de.koshi.photodream.ui.NotificationCenter
 import de.koshi.photodream.util.ConfigManager
 
@@ -55,6 +58,7 @@ import de.koshi.photodream.util.ConfigManager
  * - GET /playlist - Full current playlist as JSON
  * - GET /gallery - Browser page showing the whole playlist as thumbnails
  * - GET /thumb?id=<assetId> - Immich thumbnail proxy (the browser has no API key)
+ * - GET/POST /screen - Screen on/off ({"on": false, "mode": "soft"|"hard"})
  */
 class HttpServerService : Service() {
     
@@ -277,6 +281,32 @@ class HttpServerService : Service() {
 
         // Initialize device info in status
         updateDeviceInfo()
+
+        // Report screen on/off to HA right away (the slideshow may not be running to do it)
+        ScreenManager.onChanged = { reportScreenStateToHA() }
+    }
+
+    private val webhookClient by lazy { okhttp3.OkHttpClient() }
+
+    /** Push the full status (incl. screen_on) to the HA status webhook. */
+    private fun reportScreenStateToHA() {
+        val config = currentConfig ?: return
+        val webhookUrl = config.webhookUrl
+        if (webhookUrl.isNullOrBlank()) return
+        val status = (SlideshowBridge.commands()?.status() ?: currentStatus)
+            .copy(screenOn = ScreenManager.isScreenOn())
+        val json = gson.toJson(status.webhookPayload(config.deviceId))
+        Thread {
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url(webhookUrl)
+                    .post(json.toRequestBody("application/json".toMediaType()))
+                    .build()
+                webhookClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to report screen state: ${e.message}")
+            }
+        }.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -447,6 +477,10 @@ class HttpServerService : Service() {
                     method == Method.GET && uri == "/auto-brightness" -> handleGetAutoBrightness()
                     method == Method.POST && uri == "/auto-brightness" -> handleSetAutoBrightness(session)
                     
+                    // Screen on/off
+                    method == Method.GET && uri == "/screen" -> jsonResponse(screenState())
+                    method == Method.POST && uri == "/screen" -> handleSetScreen(session)
+
                     // Slideshow control endpoints
                     method == Method.POST && uri == "/slideshow/start" -> handleSlideshowStart()
                     method == Method.POST && uri == "/slideshow/exit" -> handleSlideshowExit()
@@ -470,7 +504,7 @@ class HttpServerService : Service() {
         private fun handleStatus(): Response {
             // Use callback if DreamService is bound, otherwise use cached status
             val status = SlideshowBridge.commands()?.status() ?: currentStatus
-            return jsonResponse(status)
+            return jsonResponse(status.copy(screenOn = ScreenManager.isScreenOn()))
         }
         
         private fun handleConfigure(session: IHTTPSession): Response {
@@ -761,6 +795,7 @@ class HttpServerService : Service() {
                     "auto" to BrightnessManager.isAutoBrightnessEnabled(this@HttpServerService),
                     "has_permission" to BrightnessManager.hasWriteSettingsPermission(this@HttpServerService)
                 ),
+                "screen" to screenState(),
                 "last_received_config" to configObject
             ))
         }
@@ -977,6 +1012,50 @@ class HttpServerService : Service() {
             ))
         }
         
+        // ========== Screen On/Off ==========
+
+        private fun screenState(): Map<String, Any?> = mapOf(
+            "screen_on" to ScreenManager.isScreenOn(),
+            "mode" to ScreenManager.offMode,
+            "hard_off_available" to ScreenManager.isHardOffAvailable(this@HttpServerService),
+            "overlay_permission" to Settings.canDrawOverlays(this@HttpServerService)
+        )
+
+        private fun handleSetScreen(session: IHTTPSession): Response {
+            val body = mutableMapOf<String, String>()
+            session.parseBody(body)
+
+            val postData = body["postData"] ?: "{}"
+            val request = gson.fromJson(postData, Map::class.java)
+            val on = request["on"] as? Boolean
+            val mode = (request["mode"] as? String) ?: ScreenManager.MODE_SOFT
+
+            if (on == null) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    MIME_PLAINTEXT,
+                    "Missing 'on' field (expected boolean)"
+                )
+            }
+
+            // Wake locks, WindowManager and lockNow() all want the main thread; wait for it
+            // so the response carries the effective mode (hard falls back to soft).
+            val done = java.util.concurrent.CountDownLatch(1)
+            mainHandler.post {
+                try {
+                    if (on) ScreenManager.screenOn(this@HttpServerService)
+                    else ScreenManager.screenOff(this@HttpServerService, mode)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Screen ${if (on) "on" else "off"} failed: ${e.message}", e)
+                } finally {
+                    done.countDown()
+                }
+            }
+            done.await(3, java.util.concurrent.TimeUnit.SECONDS)
+
+            return jsonResponse(mapOf<String, Any?>("success" to (ScreenManager.isScreenOn() == on)) + screenState())
+        }
+
         // ========== Slideshow Control Handlers ==========
         
         private fun handleSlideshowStart(): Response {

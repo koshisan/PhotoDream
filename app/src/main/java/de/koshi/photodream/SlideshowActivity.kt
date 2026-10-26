@@ -65,6 +65,19 @@ class SlideshowActivity : AppCompatActivity() {
         
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Show over the keyguard: after a hard screen-off from HA (lockNow) the slideshow is
+        // restarted on wake and must not end up hidden behind the lock screen.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
         
         // Create container and controller
         val container = FrameLayout(this)

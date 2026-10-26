@@ -348,5 +348,25 @@ data class DeviceStatus(
     val appVersion: String? = null,
     
     @SerializedName("last_received_config")
-    val lastReceivedConfig: String? = null  // Raw JSON of last config push for debugging
-)
+    val lastReceivedConfig: String? = null,  // Raw JSON of last config push for debugging
+
+    @SerializedName("screen_on")
+    val screenOn: Boolean = true
+) {
+    /** Body of the status webhook to HA. */
+    fun webhookPayload(deviceId: String): Map<String, Any?> = mapOf(
+        "device_id" to deviceId,
+        "online" to online,
+        "active" to active,
+        "current_image" to currentImage,
+        "current_image_url" to currentImageUrl,
+        "profile" to profile,
+        "last_refresh" to lastRefresh,
+        "mac_address" to macAddress,
+        "ip_address" to ipAddress,
+        "display_width" to displayWidth,
+        "display_height" to displayHeight,
+        "app_version" to appVersion,
+        "screen_on" to screenOn
+    )
+}

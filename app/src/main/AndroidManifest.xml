@@ -9,6 +9,8 @@
     
     <!-- Keep screen on while dreaming -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Wake the screen again after a hard screen-off from HA (needed for ACQUIRE_CAUSES_WAKEUP on Android 14+) -->
+    <uses-permission android:name="android.permission.TURN_SCREEN_ON" />
     
     <!-- Foreground service for HTTP server -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -122,6 +124,21 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
         
+        <!-- Device admin (optional): real screen-off via lockNow() for the HA "Screen" switch -->
+        <receiver
+            android:name=".util.ScreenManager$AdminReceiver"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!-- FileProvider for APK installation -->
         <provider
             android:name="androidx.core.content.FileProvider"

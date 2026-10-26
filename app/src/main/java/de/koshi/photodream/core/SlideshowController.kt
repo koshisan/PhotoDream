@@ -46,6 +46,7 @@ import de.koshi.photodream.util.ArtistImageProvider
 import de.koshi.photodream.util.ConfigManager
 import de.koshi.photodream.util.DeviceInfo
 import de.koshi.photodream.util.SmartShuffle
+import de.koshi.photodream.util.ScreenManager
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -240,6 +241,11 @@ class SlideshowController(
     private val slideshowRunnable = object : Runnable {
         override fun run() {
             ensureOwnership()   // self-heal from the timer proven to keep running
+            // Screen soft-off: keep the current image, don't load new ones in the dark
+            if (ScreenManager.isOff) {
+                handler.postDelayed(this, (config?.display?.intervalSeconds ?: 30) * 1000L)
+                return
+            }
             // Don't cut a video off mid-play when "always play full video" is on: defer the
             // advance until the video finishes one full play (onVideoFirstPlayComplete).
             if (shouldDeferAdvanceForVideo()) {
@@ -269,6 +275,7 @@ class SlideshowController(
         override fun onCalendar(events: List<CalendarEvent>) = applyCalendar(events)
         override fun onMedia(media: MediaState) = applyMedia(media)
         override fun onUpdateAvailable(info: HttpServerService.UpdateInfo) = showUpdateAvailable(info)
+        override fun onScreenPower() = applyScreenPower()
         override fun status(): DeviceStatus = getCurrentStatus()
         override fun playlistInfo(): HttpServerService.PlaylistInfo? = getPlaylistInfoInternal()
         override fun playlistItems(): List<HttpServerService.ImageInfo> = getPlaylistItemsInternal()
@@ -306,6 +313,7 @@ class SlideshowController(
     fun start() {
         gestureDetector = GestureDetector(context, gestureListener)
         setupUI()
+        applyScreenPower()   // started while the screen is soft-off -> stay dark
         // Become the (preferred) notification renderer; any active notifications carry over.
         NotificationCenter.init(context)
         NotificationCenter.attachSlideshow(notificationStack, ownerAlive)
@@ -387,7 +395,33 @@ class SlideshowController(
      * Handle touch events. Call this from dispatchTouchEvent.
      */
     fun onTouchEvent(event: MotionEvent): Boolean {
+        // Screen off from HA: a tap only turns it back on
+        if (ScreenManager.isOff) {
+            if (event.action == MotionEvent.ACTION_UP) ScreenManager.screenOn(context)
+            return true
+        }
         return gestureDetector.onTouchEvent(event)
+    }
+
+    // Black curtain for screen soft-off. Backs up the overlay window, which is missing without
+    // the overlay permission and may sit below the dream window on older Android versions.
+    private var screenCurtain: View? = null
+
+    private fun applyScreenPower() {
+        val dark = ScreenManager.isOff && ScreenManager.offMode == ScreenManager.MODE_SOFT
+        if (dark && screenCurtain == null) {
+            screenCurtain = View(context).apply {
+                setBackgroundColor(Color.BLACK)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            }
+            container.addView(screenCurtain)
+        } else if (!dark) {
+            screenCurtain?.let { container.removeView(it) }
+            screenCurtain = null
+        }
     }
     
     private fun setupUI() {
@@ -1267,21 +1301,7 @@ class SlideshowController(
             httpService?.lastWebhookAttempt = System.currentTimeMillis()
             
             try {
-                val status = getCurrentStatus()
-                val statusWithDeviceId = mapOf(
-                    "device_id" to (config?.deviceId ?: "unknown"),
-                    "online" to status.online,
-                    "active" to status.active,
-                    "current_image" to status.currentImage,
-                    "current_image_url" to status.currentImageUrl,
-                    "profile" to status.profile,
-                    "last_refresh" to status.lastRefresh,
-                    "mac_address" to status.macAddress,
-                    "ip_address" to status.ipAddress,
-                    "display_width" to status.displayWidth,
-                    "display_height" to status.displayHeight,
-                    "app_version" to status.appVersion
-                )
+                val statusWithDeviceId = getCurrentStatus().webhookPayload(config?.deviceId ?: "unknown")
                 
                 val json = gson.toJson(statusWithDeviceId)
                 val request = Request.Builder()
@@ -1415,7 +1435,8 @@ class SlideshowController(
             displayWidth = resolution.first,
             displayHeight = resolution.second,
             appVersion = de.koshi.photodream.BuildConfig.VERSION_NAME,
-            lastReceivedConfig = lastReceivedConfigJson
+            lastReceivedConfig = lastReceivedConfigJson,
+            screenOn = ScreenManager.isScreenOn()
         )
     }
     
