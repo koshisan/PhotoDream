@@ -159,7 +159,10 @@ class SlideshowController(
     
     // HTTP service binding
     private var httpService: HttpServerService? = null
-    private var serviceBound = false
+    // True from bindService() until unbindService(), whether or not the service is connected
+    // (httpService != null): a binding stays registered while connecting and after a service crash.
+    private var bindingRegistered = false
+    private var stopped = false
     
     // Webhook client
     private val httpClient = OkHttpClient()
@@ -295,13 +298,11 @@ class SlideshowController(
                 lastMediaState?.let { applyMedia(it) }
                 updateStatus(getCurrentStatus())
             }
-            serviceBound = true
             Log.d(TAG, "HttpServerService connected")
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
             httpService = null
-            serviceBound = false
             Log.d(TAG, "HttpServerService disconnected")
         }
     }
@@ -370,6 +371,8 @@ class SlideshowController(
      * Stop the slideshow. Call this when the activity/service is destroyed.
      */
     fun stop() {
+        if (stopped) return
+        stopped = true
         container.removeOnAttachStateChangeListener(ownershipListener)
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
@@ -728,18 +731,26 @@ class SlideshowController(
         // when the last binding is released — even if startForeground() was called in onCreate().
         HttpServerService.start(context)
         val intent = Intent(context, HttpServerService::class.java)
+        // The connection counts as registered even if this returns false (see bindService docs).
+        bindingRegistered = true
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
     private fun unbindHttpService() {
-        if (serviceBound) {
-            // Send "inactive" status to HA before unbinding
-            reportInactiveToHA()
-            
-            httpService?.updateStatus(DeviceStatus(online = true, active = false))
+        if (!bindingRegistered) return
+        bindingRegistered = false
+
+        // Send "inactive" status to HA before unbinding
+        reportInactiveToHA()
+
+        httpService?.updateStatus(DeviceStatus(online = true, active = false))
+        httpService = null
+        try {
             context.unbindService(serviceConnection)
-            serviceBound = false
             Log.d(TAG, "HttpServerService unbound")
+        } catch (e: IllegalArgumentException) {
+            // Safety net: the system may already have dropped the binding with its context.
+            Log.w(TAG, "HttpServerService binding was already gone: ${e.message}")
         }
     }
     
