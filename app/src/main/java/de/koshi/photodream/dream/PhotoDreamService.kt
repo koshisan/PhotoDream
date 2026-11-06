@@ -58,4 +58,16 @@ class PhotoDreamService : DreamService() {
         }
         super.onDetachedFromWindow()
     }
+
+    /**
+     * Since Android 11 the dream's window belongs to a separate activity, so it can detach after
+     * this service is gone. By then Android has dropped the service's bindings, and unbinding in
+     * onDetachedFromWindow crashes. Stop here too, while this context is still valid.
+     */
+    override fun onDestroy() {
+        if (::controller.isInitialized) {
+            controller.stop()
+        }
+        super.onDestroy()
+    }
 }

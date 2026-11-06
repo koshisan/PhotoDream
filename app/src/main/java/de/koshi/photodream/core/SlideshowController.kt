@@ -125,6 +125,8 @@ class SlideshowController(
     private var focusActive = false
     private var lastArtistForBg: String? = null
     private var mediaWasShown = false
+    private var mediaShownMode: String? = null
+    private var cornerActive = false
     private var pausedSince = 0L                       // uptime when playback paused (0 = not paused)
     private val pauseTimeoutMs = 30_000L               // hide the player after this long paused
     private val pauseHideRunnable = Runnable { mediaState?.let { applyMedia(it) } }
@@ -159,7 +161,10 @@ class SlideshowController(
     
     // HTTP service binding
     private var httpService: HttpServerService? = null
-    private var serviceBound = false
+    // True from bindService() until unbindService(), whether or not the service is connected
+    // (httpService != null): a binding stays registered while connecting and after a service crash.
+    private var bindingRegistered = false
+    private var stopped = false
     
     // Webhook client
     private val httpClient = OkHttpClient()
@@ -295,13 +300,11 @@ class SlideshowController(
                 lastMediaState?.let { applyMedia(it) }
                 updateStatus(getCurrentStatus())
             }
-            serviceBound = true
             Log.d(TAG, "HttpServerService connected")
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
             httpService = null
-            serviceBound = false
             Log.d(TAG, "HttpServerService disconnected")
         }
     }
@@ -370,6 +373,8 @@ class SlideshowController(
      * Stop the slideshow. Call this when the activity/service is destroyed.
      */
     fun stop() {
+        if (stopped) return
+        stopped = true
         container.removeOnAttachStateChangeListener(ownershipListener)
         handler.removeCallbacks(clockRunnable)
         handler.removeCallbacks(slideshowRunnable)
@@ -728,18 +733,26 @@ class SlideshowController(
         // when the last binding is released — even if startForeground() was called in onCreate().
         HttpServerService.start(context)
         val intent = Intent(context, HttpServerService::class.java)
+        // The connection counts as registered even if this returns false (see bindService docs).
+        bindingRegistered = true
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
     private fun unbindHttpService() {
-        if (serviceBound) {
-            // Send "inactive" status to HA before unbinding
-            reportInactiveToHA()
-            
-            httpService?.updateStatus(DeviceStatus(online = true, active = false))
+        if (!bindingRegistered) return
+        bindingRegistered = false
+
+        // Send "inactive" status to HA before unbinding
+        reportInactiveToHA()
+
+        httpService?.updateStatus(DeviceStatus(online = true, active = false))
+        httpService = null
+        try {
             context.unbindService(serviceConnection)
-            serviceBound = false
             Log.d(TAG, "HttpServerService unbound")
+        } catch (e: IllegalArgumentException) {
+            // Safety net: the system may already have dropped the binding with its context.
+            Log.w(TAG, "HttpServerService binding was already gone: ${e.message}")
         }
     }
     
@@ -859,7 +872,10 @@ class SlideshowController(
         // Legibility scrim follows the clock's vertical band
         setupClockScrim(display.clockPosition)
 
+        handler.removeCallbacks(clockRunnable)  // setupClock runs repeatedly; keep a single tick loop
         handler.post(clockRunnable)
+
+        if (cornerActive) applyCornerClock()
     }
 
     private fun gravityForPosition(position: Int): Int = when (position) {
@@ -1764,7 +1780,7 @@ class SlideshowController(
             addAgendaEvent(ev, baseFont, cal.showLocation)
         }
 
-        calendarCard.visibility = View.VISIBLE
+        calendarCard.visibility = if (focusActive || cornerActive) View.GONE else View.VISIBLE
         repositionMediaPlayer()
         setBackdropImage()
     }
@@ -2234,10 +2250,20 @@ class SlideshowController(
         val show = mode != "off" && active
         if (show) {
             mediaPlayer.apply(mode, state, computePlayerGravity())
-            if (!mediaWasShown) { mediaWasShown = true; setBackdropImage() }  // frost the new card
+            if (!mediaWasShown || mode != mediaShownMode) {  // frost the new card
+                mediaWasShown = true
+                mediaShownMode = mode
+                setBackdropImage()
+            }
         } else {
             mediaPlayer.apply("off", null)
             mediaWasShown = false
+        }
+
+        val corner = show && mode == "corner"
+        if (cornerActive && !corner) {
+            cornerActive = false
+            leaveCornerLayout()
         }
 
         val focus = show && mode == "focus"
@@ -2256,6 +2282,44 @@ class SlideshowController(
             renderCalendar()       // restore the agenda
             hideArtistBg()
         }
+
+        if (corner && !cornerActive) {
+            cornerActive = true
+            enterCornerLayout()
+        }
+    }
+
+    /** Corner mode keeps the picture clear: no agenda, a small clock, a lighter scrim. */
+    private fun enterCornerLayout() {
+        if (::calendarCard.isInitialized) calendarCard.visibility = View.GONE
+        applyCornerClock()
+        // Keep notifications out of the disc. Cards are 60% of the screen wide, leaving 20% each side.
+        val room = context.resources.displayMetrics.widthPixels / 5
+        notificationHost.translationX = -minOf(dp(150), room).toFloat()
+    }
+
+    private fun leaveCornerLayout() {
+        clockScrim.alpha = 1f
+        notificationHost.translationX = 0f
+        overlayContainer.scaleX = 1f
+        overlayContainer.scaleY = 1f
+        config?.let { setupClock(it.display) }  // restore configured position, weather and scrim
+        renderCalendar()                        // restore the agenda
+    }
+
+    private fun applyCornerClock() {
+        if (config?.display?.clock != true) return
+        val lp = overlayContainer.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.BOTTOM or Gravity.START
+        lp.setMargins(dp(22), 0, 0, dp(18))
+        overlayContainer.layoutParams = lp
+        rightColumn.visibility = View.GONE
+        overlayContainer.scaleX = 0.42f
+        overlayContainer.scaleY = 0.42f
+        overlayContainer.pivotX = 0f
+        overlayContainer.post { overlayContainer.pivotY = overlayContainer.height.toFloat() }
+        setupClockScrim(3)  // the clock is bottom-left now, whatever its configured position
+        clockScrim.alpha = 0.35f
     }
 
     /**

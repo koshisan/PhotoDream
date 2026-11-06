@@ -184,7 +184,7 @@ data class NotificationPayload(
  * The actual now-playing state is delivered separately via POST /media.
  */
 data class MediaConfig(
-    // "off" | "compact" | "focus". compact/focus only appear during playback.
+    // "off" | "compact" | "focus" | "corner". All but "off" only appear during playback.
     val mode: String = "off",
 
     // Optional fanart.tv project key for HD artist backgrounds in focus mode.
